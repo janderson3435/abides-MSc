@@ -36,7 +36,7 @@ class RetailExecutionAgent(TradingAgent):
         self.eta = eta  # strategic threshold
         self.lambda_a = lambda_a  # mean arrival rate of ZI agents
         self.risk_factor = risk_factor # proportion of portfolio to move on each trade
-        #TODO: add parameters for 1. length of position hold 2. size of trades 
+        #TODO: add parameters for length of position hold 
         
         self.slippages = []
         self.execution_times = []
@@ -295,29 +295,40 @@ class RetailExecutionAgent(TradingAgent):
 
         # Place the order.
         cash = self.holdings['CASH']
+        no_shares = False
+        shares = 0 
+        if self.symbol in self.holdings.keys():
+            shares = self.holdings[self.symbol]
+        else:
+            no_shares = True
 
         # draw size from Poisson distribution 
         # mean is current cash/estimated price (max stocks could buy) times by risk factor
         # risk factor determines how much of portfolio to shift on each trade
         size = self.random_state.poisson(int((cash / p) * self.risk_factor))
-
+        if size == 0:
+            size += 1
         # check agent has enough cash to place order
         # incrementally reduce size until it can be afforded
         
-        # TODO: ban (some?) retail agents from shorting e.g can't sell stocks don't have (or limits) 
+         
         if not(bid is None or ask is None):
-            while ask*size > cash and size > 0:
+            while buy and ask*size > cash and size > 0: # can we afford to buy this volume?
                 size -= 1
                 if size == 0:
                     log_print("{} could not afford {} shares at ask = {}", self.name, size, ask)
                     return
             
-            while bid*size > cash and size > 0:
+            while (not buy) and (size > shares) and (size > 0): 
+                # do we have the stock to sell?
+                # TODO: allow (some?) retail agents to short 
                 size -= 1
-                if size == 0:
-                    log_print("{} could not afford {} shares at bid = {}", self.name, size, ask)
+                if size == 0 or no_shares:
+                    log_print("{} could not afford to sell {} shares", self.name, size)
                     return
-
+        else:
+            return
+  
         if self.order_type == "limit":
             self.placeLimitOrder(self.symbol, size, buy, p)
         else:

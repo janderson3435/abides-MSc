@@ -28,7 +28,7 @@ for log_dir in log_dirs:
     try:
       df = pd.read_pickle(os.path.join(log_dir,file), compression='bz2')
       # print(df)
-      events = [ 'AGENT_TYPE', 'TOTAL_ORDERS', 'AVG_ABS_SLIPPAGE', 'NET_SLIPPAGE', 'MAX_ABS_SLIPPAGE', 'PCT_IN', 'PCT_OUT', 'AVG_TIME', 'FINAL_PCT_PROFIT', 'SLIP_ADJ_PCT_PROFIT']
+      events = [ 'AGENT_TYPE', 'TOTAL_ORDERS', 'AVG_ABS_SLIPPAGE', 'NET_SLIPPAGE', 'MAX_ABS_SLIPPAGE', 'PCT_IN', 'PCT_OUT', 'AVG_TIME', 'FINAL_PCT_PROFIT', 'SLIP_ADJ_PCT_PROFIT', 'AVG_SIZE']
       event = "|".join(events)
       df = df[df['EventType'].str.contains(event)]
 
@@ -45,8 +45,9 @@ for log_dir in log_dirs:
       ati = df.loc[df['EventType'] == 'AVG_TIME', 'Event'][0]
       fpp = df.loc[df['EventType'] == 'FINAL_PCT_PROFIT', 'Event'][0]
       sapp = df.loc[df['EventType'] == 'SLIP_ADJ_PCT_PROFIT', 'Event'][0]
+      ass = df.loc[df['EventType'] == 'AVG_SIZE', 'Event'][0]
 
-      stats.append({ 'AgentType' : at, 'TotalOrders': to, 'AvgAbsSlippage': aas, 'NetSlippage': ns, 'MaxAbsSlippage': mas, 'PctIn': pin, 'PctOut': pout, 'AvgTime': ati, 'FinalPctProfit': fpp, 'SlipAdjPctProfit': sapp })
+      stats.append({ 'AgentType' : at, 'TotalOrders': to, 'AvgAbsSlippage': aas, 'NetSlippage': ns, 'MaxAbsSlippage': mas, 'PctIn': pin, 'PctOut': pout, 'AvgTime': ati, 'FinalPctProfit': fpp, 'SlipAdjPctProfit': sapp, 'AvgSize': ass})
 
     except (IndexError, KeyError):
       continue

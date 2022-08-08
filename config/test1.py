@@ -66,7 +66,7 @@ parser.add_argument('-t',
                     help='Stock Ticker')
 parser.add_argument('-e',
                     '--experiment_length',
-                    default='70:00:00', #TODO     test odd times that dont split evenly into days
+                    default='70:00:00', #TODO: odd times round up - not ideal for short tests
                     help='Experiment length')               
 parser.add_argument('-n',
                     '--noise',
@@ -216,6 +216,7 @@ agents.extend([HeuristicBeliefLearningAgent(id=j,
                                             eta=1,
                                             lambda_a=1e-12,
                                             L=2,
+                                            risk_factor=0.1,
                                             log_orders=False,
                                             random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32,
                                                                                                       dtype='uint64')))

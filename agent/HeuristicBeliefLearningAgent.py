@@ -15,7 +15,7 @@ class HeuristicBeliefLearningAgent(ZeroIntelligenceAgent):
     def __init__(self, id, name, type, symbol='IBM', starting_cash=100000, sigma_n=1000,
                  r_bar=100000, kappa=0.05, sigma_s=100000, q_max=10, sigma_pv=5000000, R_min=0,
                  R_max=250, eta=1.0, lambda_a=0.005, L=8, log_orders=False,
-                 random_state=None):
+                 random_state=None, risk_factor=0.1):
 
         # Base class init.
         super().__init__(id, name, type, symbol=symbol, starting_cash=starting_cash, sigma_n=sigma_n,
@@ -25,6 +25,7 @@ class HeuristicBeliefLearningAgent(ZeroIntelligenceAgent):
 
         # Store important parameters particular to the HBL agent.
         self.L = L  # length of order book history to use (number of transactions)
+        self.risk_factor = risk_factor
 
     def wakeup(self, currentTime):
         # Parent class handles discovery of exchange times and market_open wakeup call.
@@ -132,6 +133,30 @@ class HeuristicBeliefLearningAgent(ZeroIntelligenceAgent):
         best_idx = np.argmax(nd[:, 7])
         best_Es, best_Pr = nd[best_idx, [7, 6]]
         best_p = low_p + best_idx
+        
+        size = 100
+        cash = self.holdings['CASH']
+        no_shares = False
+        shares = 0
+        if self.symbol in self.holdings.keys():
+            shares = self.holdings[self.symbol]
+        else:
+            no_shares = True
+        size = self.random_state.poisson(int((cash / best_p) * self.risk_factor))
+
+        # calculate whether size is possible
+        # TODO: allow debt?
+        while buy and (best_p*size > cash) and (size > 0):
+            size -= 1
+            if size == 0:
+                log_print("{} could not afford {} shares at price", self.name, size)
+                return
+        
+        while (not buy) and (size > shares) and (size > 0):
+            size -= 1
+            if size == 0 or no_shares:
+                log_print("{} could not afford to sell {} shares", self.name, size)
+                return
 
         # If the best expected surplus is positive, go for it.
         if best_Es > 0:
@@ -139,8 +164,7 @@ class HeuristicBeliefLearningAgent(ZeroIntelligenceAgent):
                       int(round(best_Es)), best_Pr)
 
             # Place the constructed order.
-            self.placeLimitOrder(self.symbol, 100, buy, int(round(best_p)))
-        else:
+            self.placeLimitOrder(self.symbol, size, buy, int(round(best_p)))
             # Do nothing if best limit price has negative expected surplus with below code.
             log_print("Numpy: {} elects not to place an order (best expected surplus <= 0)", self.name)
 

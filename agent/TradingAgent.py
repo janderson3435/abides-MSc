@@ -146,6 +146,7 @@ class TradingAgent(FinancialAgent):
         self.slippages = []
         self.prices = []
         self.times = []
+        self.sizes = []
 
         self.book_count = 0
         self.instant_count = 0
@@ -159,6 +160,7 @@ class TradingAgent(FinancialAgent):
                 self.slippages.append(o.slippage)
                 self.prices.append(o.fill_price)
                 self.times.append(o.fill_time) # dont need days 
+                self.sizes.append(o.quantity)
 
                 if o.fill_type == "BOOK":
                     self.book_count += 1
@@ -192,6 +194,7 @@ class TradingAgent(FinancialAgent):
             self.logEvent('PCT_IN', int(getPct(self)[0]*100), True)
             self.logEvent('PCT_OUT', int(getPct(self)[1]*100), True)
             self.logEvent('AVG_TIME', np.mean(self.times).total_seconds(), True)
+            self.logEvent('AVG_SIZE', np.mean(self.sizes), True)
           #  self.logEvent('MAX_EXECUTION_TIME', np.max(self.times).total_seconds(), True)
             self.logEvent('SLIP_ADJ_PCT_PROFIT', round(100*(np.sum(self.slippages) + gain)/self.starting_cash, 5), True)
    
@@ -342,8 +345,7 @@ class TradingAgent(FinancialAgent):
       # this as a subclass request so each agent can supply an appropriate offset relative
       # to its trading frequency.
       ns_offset = self.getWakeFrequency()
-      if self.id == 1:
-       print("Agent {} sleeping until {}".format(self.id, self.kernel.fmtTime(self.mkt_open + ns_offset)))
+     
       self.setWakeup(self.mkt_open + ns_offset)
       
     #  if initial_mkt_open != self.mkt_open:
