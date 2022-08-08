@@ -19,5 +19,6 @@ if len(sys.argv) > 2:
   event = "|".join(events)
   df = df[df['EventType'].str.contains(event)]
 
+df = df.reset_index(drop=True)
 print(df)
 

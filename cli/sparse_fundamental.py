@@ -15,7 +15,7 @@ pd.options.display.max_rows = 1000
 pd.options.display.max_colwidth = 200
 
 BETWEEN_START = pd.to_datetime('09:30').time()
-BETWEEN_END = pd.to_datetime('16:00:00').time()
+BETWEEN_END = pd.to_datetime('10:00:00').time()
 
 # Linewidth for plots.
 LW = 2
@@ -42,9 +42,13 @@ symbol = m.group(1)
 print ("Visualizing simulated fundamental from {}".format(sim_file))
 df_sim = pd.read_pickle(sim_file, compression='bz2')
 
+
+# dollarize value column
+df_sim['FundamentalValue'] = df_sim['FundamentalValue']/100
+
 plt.rcParams.update({'font.size': 12})
 
-print (df_sim.head())
+#print (df_sim.head())
 
 # Use to restrict time to plot.
 #df_sim = df_sim.between_time(BETWEEN_START, BETWEEN_END)
@@ -67,10 +71,9 @@ axes[0].legend(['Simulated'])
 
 plt.suptitle('Fundamental Value: {}'.format(symbol))
 
-axes[0].set_ylabel('Fundamental Value')
+axes[0].set_ylabel('Fundamental Value ($)')
 axes[0].set_xlabel('Fundamental Time')
 
-#plt.savefig('background_{}.png'.format(b))
-
+plt.savefig('fundamental_{}.png'.format(symbol))
 plt.show()
 

@@ -1,33 +1,47 @@
+from Kernel import Kernel
+from agent.FinancialAgent import dollarize
 from agent.TradingAgent import TradingAgent
 from util.util import log_print
-
+from util.order import LimitOrder
 from math import sqrt
 import numpy as np
 import pandas as pd
 
 
-class ZeroIntelligenceAgent(TradingAgent):
+class RetailExecutionAgent(TradingAgent):
+    
+    """
+    Retail trading agent, designed to behave like a real life retail trader.
+    Model based is an extension of zero-intelligence-constrained traders, with additional parameters.
+    """
 
     def __init__(self, id, name, type, symbol='IBM', starting_cash=100000, sigma_n=1000,
                  r_bar=100000, kappa=0.05, sigma_s=100000, q_max=10,
                  sigma_pv=5000000, R_min=0, R_max=250, eta=1.0,
-                 lambda_a=0.005, log_orders=False, random_state=None):
+                 lambda_a=0.005, log_orders=False, random_state=None, execution=True, risk_factor=0.1, order_type=None, retail_delay=1000000000):
 
         # Base class init.
-        super().__init__(id, name, type, starting_cash=starting_cash, log_orders=log_orders, random_state=random_state)
+        super().__init__(id, name, type, starting_cash=starting_cash, log_orders=log_orders, random_state=random_state, execution=execution)
 
         # Store important parameters particular to the ZI agent.
-        self.symbol = symbol  # symbol to trade
-        self.sigma_n = sigma_n  # observation noise variance
+        self.symbol = symbol  # symbol to trade        
+        self.sigma_n = sigma_n  # observation noise variance 
         self.r_bar = r_bar  # true mean fundamental value
         self.kappa = kappa  # mean reversion parameter
         self.sigma_s = sigma_s  # shock variance
-        self.q_max = q_max  # max unit holdings
+        self.q_max = q_max  # max unit holdings     
         self.sigma_pv = sigma_pv  # private value variance
         self.R_min = R_min  # min requested surplus
         self.R_max = R_max  # max requested surplus
         self.eta = eta  # strategic threshold
         self.lambda_a = lambda_a  # mean arrival rate of ZI agents
+        self.risk_factor = risk_factor # proportion of portfolio to move on each trade
+        #TODO: add parameters for 1. length of position hold 2. size of trades 
+        
+        self.slippages = []
+        self.execution_times = []
+        self.order_type = order_type # 'limit' or 'market', default market. limit guarantees 0 slippage but less likely to fill
+        self.retail_delay = retail_delay # delay for slippage simulation
 
         # The agent uses this to track whether it has begun its strategy or is still
         # handling pre-market tasks.
@@ -61,7 +75,6 @@ class ZeroIntelligenceAgent(TradingAgent):
     def kernelStopping(self):
         # Always call parent method to be safe.
         super().kernelStopping()
-
         # Print end of day valuation.
         H = int(round(self.getHoldings(self.symbol), -2) / 100)
         # May request real fundamental value from oracle as part of final cleanup/stats.
@@ -92,12 +105,13 @@ class ZeroIntelligenceAgent(TradingAgent):
         cash = self.markToMarket(self.holdings)
         gain = cash - self.starting_cash
         percentage_profit = round(100*(gain)/self.starting_cash, 5)
-        # BUG: gives 0 from rounding error
         self.logEvent('FINAL_PCT_PROFIT', percentage_profit, True) # add these 2 lines to agents
         
+
         log_print(
             "{} final report.  Holdings {}, end cash {}, start cash {}, final fundamental {}, preferences {}, surplus {}",
             self.name, H, self.holdings['CASH'], self.starting_cash, rT, self.theta, surplus)
+
 
     def wakeup(self, currentTime):
         # Parent class handles discovery of exchange times and market_open wakeup call.
@@ -157,7 +171,7 @@ class ZeroIntelligenceAgent(TradingAgent):
         # If the calling agent is a subclass, don't initiate the strategy section of wakeup(), as it
         # may want to do something different.
 
-        if type(self) == ZeroIntelligenceAgent:
+        if type(self) == RetailExecutionAgent:
             self.getCurrentSpread(self.symbol)
             self.state = 'AWAITING_SPREAD'
         else:
@@ -280,9 +294,40 @@ class ZeroIntelligenceAgent(TradingAgent):
                 log_print("{} demands R = {}, limit price {}", self.name, R, p)
 
         # Place the order.
-        size = 100
-        self.placeLimitOrder(self.symbol, size, buy, p)
+        cash = self.holdings['CASH']
 
+        # draw size from Poisson distribution 
+        # mean is current cash/estimated price (max stocks could buy) times by risk factor
+        # risk factor determines how much of portfolio to shift on each trade
+        size = self.random_state.poisson(int((cash / p) * self.risk_factor))
+
+        # check agent has enough cash to place order
+        # incrementally reduce size until it can be afforded
+        
+        # TODO: ban (some?) retail agents from shorting e.g can't sell stocks don't have (or limits) 
+        if not(bid is None or ask is None):
+            while ask*size > cash and size > 0:
+                size -= 1
+                if size == 0:
+                    log_print("{} could not afford {} shares at ask = {}", self.name, size, ask)
+                    return
+            
+            while bid*size > cash and size > 0:
+                size -= 1
+                if size == 0:
+                    log_print("{} could not afford {} shares at bid = {}", self.name, size, ask)
+                    return
+
+        if self.order_type == "limit":
+            self.placeLimitOrder(self.symbol, size, buy, p)
+        else:
+            if buy:      
+                self.placeMarketOrder(self.symbol, size, buy, best=ask, delay=self.retail_delay)
+                # TODO: Use volume to calc NBBO?
+                # print("Best ask at order: " + str(ask) + " at time " + str(self.currentTime.strftime("%H:%M:%S")))
+            else:
+                self.placeMarketOrder(self.symbol, size, buy, best=bid, delay=self.retail_delay)
+        
     def receiveMessage(self, currentTime, msg):
         # Parent class schedules market open wakeup call once market open/close times are known.
         super().receiveMessage(currentTime, msg)

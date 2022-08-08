@@ -24,7 +24,7 @@ from copy import deepcopy
 class ExchangeAgent(FinancialAgent):
 
   def __init__(self, id, name, type, mkt_open, mkt_close, symbols, book_freq='S', wide_book=False, pipeline_delay = 40000,
-               computation_delay = 1, stream_history = 0, log_orders = False, random_state = None):
+               computation_delay = 1, stream_history = 0, days = 1, log_orders = False, random_state = None):
 
     super().__init__(id, name, type, random_state)
 
@@ -34,6 +34,9 @@ class ExchangeAgent(FinancialAgent):
     # Store this exchange's open and close times.
     self.mkt_open = mkt_open
     self.mkt_close = mkt_close
+    self.sim_days = days
+    self.current_day = 1
+    self.first_mkt_open = True # flag for first opening allowing messages before 
 
     # Right now, only the exchange agent has a parallel processing pipeline delay.  This is an additional
     # delay added only to order activity (placing orders, etc) and not simple inquiries (market operating
@@ -123,7 +126,7 @@ class ExchangeAgent(FinancialAgent):
     self.setComputationDelay(self.computation_delay)
 
     # Is the exchange closed?  (This block only affects post-close, not pre-open.)
-    if currentTime > self.mkt_close:
+    if self.checkMarketClosed():
       # Most messages after close will receive a 'MKT_CLOSED' message in response.  A few things
       # might still be processed, like requests for final trade prices or such.
       if msg.body['msg'] in ['LIMIT_ORDER', 'MARKET_ORDER', 'CANCEL_ORDER', 'MODIFY_ORDER']:
@@ -132,9 +135,10 @@ class ExchangeAgent(FinancialAgent):
 
         # Don't do any further processing on these messages!
         return
-      elif 'QUERY' in msg.body['msg']:
+      elif 'QUERY' in msg.body['msg'] or 'WHEN_MKT_OPEN' in msg.body['msg'] or 'WHEN_MKT_CLOSE' in msg.body['msg']: 
         # Specifically do allow querying after market close, so agents can get the
         # final trade of the day as their "daily close" price for a symbol.
+        # Also allow when_mkt_open for interday sims
         pass
       else:
         log_print("{} received {}, discarded: market is closed.", self.name, msg.body['msg'])
@@ -163,7 +167,15 @@ class ExchangeAgent(FinancialAgent):
       # quotes or trades.
       self.setComputationDelay(0)
 
+      # check if market has shut for last time
+      # TODO: improve this so it works with getMarketClosed function 
+      if self.currentTime > self.mkt_close and self.currentTime > self.mkt_open and (self.sim_days == self.current_day):
+        # TODO: never enters this block?
+        self.sendMessage(msg.body['sender'], Message({"msg": "FINAL_CLOSE"}))
+        return
+
       self.sendMessage(msg.body['sender'], Message({"msg": "WHEN_MKT_OPEN", "data": self.mkt_open}))
+   
     elif msg.body['msg'] == "WHEN_MKT_CLOSE":
       log_print("{} received WHEN_MKT_CLOSE request from agent {}", self.name, msg.body['sender'])
 
@@ -171,8 +183,13 @@ class ExchangeAgent(FinancialAgent):
       # hours?") instantly.  This does NOT include anything that queries mutable data, like equity
       # quotes or trades.
       self.setComputationDelay(0)
+      # check if market has shut for last time
+      if self.currentTime > self.mkt_close and self.currentTime > self.mkt_open and (self.sim_days == self.current_day):
+        self.sendMessage(msg.body['sender'], Message({"msg": "FINAL_CLOSE"}))
+        return
 
       self.sendMessage(msg.body['sender'], Message({"msg": "WHEN_MKT_CLOSE", "data": self.mkt_close}))
+    
     elif msg.body['msg'] == "QUERY_LAST_TRADE":
       symbol = msg.body['symbol']
       if symbol not in self.order_books:
@@ -184,7 +201,7 @@ class ExchangeAgent(FinancialAgent):
         # This will return the average share price if multiple executions resulted from a single order.
         self.sendMessage(msg.body['sender'], Message({"msg": "QUERY_LAST_TRADE", "symbol": symbol,
                                                       "data": self.order_books[symbol].last_trade,
-                                                      "mkt_closed": True if currentTime > self.mkt_close else False}))
+                                                      "mkt_closed": self.checkMarketClosed()}))
     elif msg.body['msg'] == "QUERY_SPREAD":
       symbol = msg.body['symbol']
       depth = msg.body['depth']
@@ -200,7 +217,7 @@ class ExchangeAgent(FinancialAgent):
                                                       "bids": self.order_books[symbol].getInsideBids(depth),
                                                       "asks": self.order_books[symbol].getInsideAsks(depth),
                                                       "data": self.order_books[symbol].last_trade,
-                                                      "mkt_closed": True if currentTime > self.mkt_close else False,
+                                                      "mkt_closed": self.checkMarketClosed(),
                                                       "book": ''}))
 
         # It is possible to also send the pretty-printed order book to the agent for logging, but forcing pretty-printing
@@ -220,7 +237,7 @@ class ExchangeAgent(FinancialAgent):
       # We return indices [1:length] inclusive because the agent will want "orders leading up to the last
       # L trades", and the items under index 0 are more recent than the last trade.
       self.sendMessage(msg.body['sender'], Message({"msg": "QUERY_ORDER_STREAM", "symbol": symbol, "length": length,
-                                                    "mkt_closed": True if currentTime > self.mkt_close else False,
+                                                    "mkt_closed": self.checkMarketClosed(),
                                                     "orders": self.order_books[symbol].history[1:length + 1]
                                                     }))
     elif msg.body['msg'] == 'QUERY_TRANSACTED_VOLUME':
@@ -233,7 +250,7 @@ class ExchangeAgent(FinancialAgent):
                   msg.body['sender'])
       self.sendMessage(msg.body['sender'], Message({"msg": "QUERY_TRANSACTED_VOLUME", "symbol": symbol,
                                                     "transacted_volume": self.order_books[symbol].get_transacted_volume(lookback_period),
-                                                    "mkt_closed": True if currentTime > self.mkt_close else False
+                                                    "mkt_closed": self.checkMarketClosed()
                                                     }))
     elif msg.body['msg'] == "LIMIT_ORDER":
       order = msg.body['order']
@@ -251,6 +268,8 @@ class ExchangeAgent(FinancialAgent):
         log_print("Market Order discarded.  Unknown symbol: {}", order.symbol)
       else:
         # Hand the market order to the order book for processing.
+        # TODO: arbitary delay conditional on sender type msg.body['sender'] == "Retail":
+        
         self.order_books[order.symbol].handleMarketOrder(deepcopy(order))
         self.publishOrderBookData()
     elif msg.body['msg'] == "CANCEL_ORDER":
@@ -384,7 +403,7 @@ class ExchangeAgent(FinancialAgent):
       # Final cleanup
       if not self.wide_book:
         dfLog.rename('Volume')
-        df = pd.SparseDataFrame(index=dfLog.index)
+        df = pd.DataFrame(index=dfLog.index)
         df['Volume'] = dfLog
       else:
         df = dfLog
@@ -416,3 +435,42 @@ class ExchangeAgent(FinancialAgent):
 
   def getMarketClose(self):
     return self.__mkt_close
+
+  def checkMarketClosed(self):
+    if self.first_mkt_open and self.currentTime < self.mkt_open:
+      return False # need to allow certain messages before first market open
+   
+    elif self.first_mkt_open and self.currentTime >= self.mkt_open:
+      self.first_mkt_open = False
+      return False
+
+    if self.sim_days == self.current_day:
+      # market will shut for last time if EOD
+      if self.currentTime > self.mkt_close:
+        print("MARKET CLOSED FOR DAY {}, SHUTTING DOWN".format(self.current_day))
+      return self.currentTime > self.mkt_close 
+
+    elif self.currentTime < self.mkt_open:
+      # closed for today, but will reopen (params update below)
+      # BUG: agents see this and close down forever?
+      # BUT if false then agents keep running - not desired
+      return True
+
+    elif self.currentTime > self.mkt_close:
+      # market closed for today, but will reopen tomorrow
+      
+      print("MARKET CLOSED FOR DAY {}".format(self.current_day))
+      self.current_day += 1
+
+      # update market open and close times
+      self.mkt_open = self.mkt_open + pd.to_timedelta(1, unit='D')
+      self.mkt_close = self.mkt_close + pd.to_timedelta(1, unit='D') 
+
+      # TODO: wait for market open or fast forward to open time? how to sync with kernel?
+      self.kernel.setWakeup(sender=self.id, requestedTime=self.mkt_open)
+      return True
+
+    
+    else:
+      # market open currently
+      return False

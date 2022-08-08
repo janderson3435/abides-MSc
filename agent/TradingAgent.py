@@ -1,4 +1,5 @@
 from agent.FinancialAgent import FinancialAgent
+from agent.FinancialAgent import dollarize
 from agent.ExchangeAgent import ExchangeAgent
 from message.Message import Message
 from util.order.LimitOrder import LimitOrder
@@ -7,6 +8,7 @@ from util.util import log_print
 
 from copy import deepcopy
 import sys
+import numpy as np
 
 # The TradingAgent class (via FinancialAgent, via Agent) is intended as the
 # base class for all trading agents (i.e. not things like exchanges) in a
@@ -15,7 +17,7 @@ import sys
 # implementing a strategy without too much bookkeeping.
 class TradingAgent(FinancialAgent):
 
-  def __init__(self, id, name, type, random_state=None, starting_cash=100000, log_orders=False, log_to_file=True):
+  def __init__(self, id, name, type, random_state=None, starting_cash=100000, log_orders=False, log_to_file=True, execution=True):
     # Base class init.
     super().__init__(id, name, type, random_state, log_to_file)
 
@@ -23,9 +25,13 @@ class TradingAgent(FinancialAgent):
     self.mkt_open = None
     self.mkt_close = None
 
+    self.order_num = id * 1000  # 1000 current max orders per agent, needed so order ids don't overlap - TODO: better solution
+    self.execution = execution
+
     # Log order activity?
     self.log_orders = log_orders
-
+    self.all_orders = {} # addition to self.orders from super - also tracks closed orders
+    
     # Log all activity to file?
     if log_orders is None:
       self.log_orders = False
@@ -106,7 +112,7 @@ class TradingAgent(FinancialAgent):
 
   def kernelStarting(self, startTime):
     # self.kernel is set in Agent.kernelInitializing()
-    self.logEvent('STARTING_CASH', self.starting_cash, True)
+    self.logEvent('STARTING_CASH', dollarize(int(self.starting_cash)), True)
 
     # Find an exchange with which we can place orders.  It is guaranteed
     # to exist by now (if there is one).
@@ -130,15 +136,69 @@ class TradingAgent(FinancialAgent):
     # Mark to market.
     cash = self.markToMarket(self.holdings)
 
-    self.logEvent('ENDING_CASH', cash, True)
+    self.logEvent('ENDING_CASH', dollarize(int(cash)), True)
     print ("Final holdings for {}: {}.  Marked to market: {}".format(self.name, self.fmtHoldings(self.holdings),
                                                                      cash))
-    
+    gain = cash - self.starting_cash
+
+    # Log executions
+    if self.execution:
+        self.slippages = []
+        self.prices = []
+        self.times = []
+
+        self.book_count = 0
+        self.instant_count = 0
+        self.fill_count = 0
+
+        flag = False 
+        for o in self.all_orders.values(): 
+            if o is not None and o.filled:
+                flag = True 
+                self.fill_count += 1
+                self.slippages.append(o.slippage)
+                self.prices.append(o.fill_price)
+                self.times.append(o.fill_time) # dont need days 
+
+                if o.fill_type == "BOOK":
+                    self.book_count += 1
+                elif o.fill_type == "INSTANT":
+                    self.instant_count += 1
+
+        def getPct(self):
+            # Calculate percentage of orders executed inside (and at) arrival price
+            # PIn equal to percentage of 0 or positive slippage
+            num_in = 0
+            for x in self.slippages:
+                if x >= 0:
+                    num_in += 1
+            num_out = len(self.slippages) - num_in
+            pct_in = num_in/len(self.slippages)
+            pct_out = num_out/len(self.slippages)
+            return pct_in, pct_out
+
+        if not(flag):
+            self.logEvent("No orders executed") 
+        else:
+            #log_print(len("EXECUTION")*"=\n" + "EXECUTION\n" + len("EXECUTION")*"=")
+            #print(self.slippages)
+            #print(self.prices)
+            self.logEvent('TOTAL_ORDERS', len(self.all_orders), True)
+            self.logEvent('TOTAL_FILLED', self.fill_count, True)
+            self.logEvent('AVG_ABS_SLIPPAGE', np.mean(np.abs(self.slippages)), True) # currently always zero
+           # self.logEvent('AVG PCT SLIPPAGE', np.mean(100*np.abs(self.slippages)/self.prices)+"%", True) # TODO: correct with volume/price??
+            self.logEvent('NET_SLIPPAGE', np.sum(self.slippages), True)
+            self.logEvent('MAX_ABS_SLIPPAGE', np.max(np.abs(self.slippages)), True)
+            self.logEvent('PCT_IN', int(getPct(self)[0]*100), True)
+            self.logEvent('PCT_OUT', int(getPct(self)[1]*100), True)
+            self.logEvent('AVG_TIME', np.mean(self.times).total_seconds(), True)
+          #  self.logEvent('MAX_EXECUTION_TIME', np.max(self.times).total_seconds(), True)
+            self.logEvent('SLIP_ADJ_PCT_PROFIT', round(100*(np.sum(self.slippages) + gain)/self.starting_cash, 5), True)
+   
     # Record final results for presentation/debugging.  This is an ugly way
     # to do this, but it is useful for now.
     mytype = self.type
-    gain = cash - self.starting_cash
-
+    
     if mytype in self.kernel.meanResultByAgentType:
       self.kernel.meanResultByAgentType[mytype] += gain
       self.kernel.agentCountByType[mytype] += 1
@@ -146,12 +206,12 @@ class TradingAgent(FinancialAgent):
       self.kernel.meanResultByAgentType[mytype] = gain
       self.kernel.agentCountByType[mytype] = 1
 
-
+  
   # Simulation participation messages.
 
   def wakeup (self, currentTime):
     super().wakeup(currentTime)
-
+    
     if self.first_wake:
       # Log initial holdings.
       self.logEvent('HOLDINGS_UPDATED', self.holdings)
@@ -161,6 +221,16 @@ class TradingAgent(FinancialAgent):
       # Ask our exchange when it opens and closes.
       self.sendMessage(self.exchangeID, Message({ "msg" : "WHEN_MKT_OPEN", "sender": self.id }))
       self.sendMessage(self.exchangeID, Message({ "msg" : "WHEN_MKT_CLOSE", "sender": self.id }))
+
+    elif self.mkt_closed:
+      # Can only enter this after full market day - mkt_close only set at EOD 
+      # check if its open by our records (should have been reset for next day before wakeup was set)
+      if self.mkt_open <= currentTime and self.mkt_close >= currentTime:    
+        if self.id == 1:
+          print("Agent {} waking up for mkt open at {}".format(self.id, currentTime)) # this won't work on first day as elif,  don't be alarmed
+          print(self.mkt_open)
+        self.mkt_closed = False
+
 
     # For the sake of subclasses, TradingAgent now returns a boolean
     # indicating whether the agent is "ready to trade" -- has it received
@@ -184,6 +254,7 @@ class TradingAgent(FinancialAgent):
 
     # Do we know the market hours?
     had_mkt_hours = self.mkt_open is not None and self.mkt_close is not None
+    initial_mkt_open = self.mkt_open
 
     # Record market open or close times.
     if msg.body['msg'] == "WHEN_MKT_OPEN":
@@ -193,7 +264,7 @@ class TradingAgent(FinancialAgent):
 
     elif msg.body['msg'] == "WHEN_MKT_CLOSE":
       self.mkt_close = msg.body['data']
-
+      
       log_print ("Recorded market close: {}", self.kernel.fmtTime(self.mkt_close))
 
     elif msg.body['msg'] == "ORDER_EXECUTED":
@@ -221,6 +292,11 @@ class TradingAgent(FinancialAgent):
       # so we stop asking for things that can't happen.
 
       self.marketClosed()
+
+    elif msg.body['msg'] == "FINAL_CLOSE":
+      # We've tried to ask the exchange for something after it closed.  Remember this
+      # so we stop asking for things that can't happen.
+      self.finalClose()
 
     elif msg.body['msg'] == 'QUERY_LAST_TRADE':
       # Call the queryLastTrade method, which subclasses may extend.
@@ -250,19 +326,30 @@ class TradingAgent(FinancialAgent):
     elif msg.body['msg'] == 'MARKET_DATA':
       self.handleMarketData(msg)
 
+    elif msg.body['msg'] == 'FILLED':
+      self.handleFilledOrder(msg)
+
+    elif msg.body['msg'] == 'NEW_SPLIT_MARKET_ORDER':
+      self.handleNewSplitMarketOrder(msg)
+
     # Now do we know the market hours?
     have_mkt_hours = self.mkt_open is not None and self.mkt_close is not None
 
     # Once we know the market open and close times, schedule a wakeup call for market open.
-    # Only do this once, when we first have both items.
-    if have_mkt_hours and not had_mkt_hours:
+    # Also want to wake for next trading day - this is when we have received a different mkt_open
+    if (have_mkt_hours and not had_mkt_hours) or (initial_mkt_open != self.mkt_open):
       # Agents are asked to generate a wake offset from the market open time.  We structure
       # this as a subclass request so each agent can supply an appropriate offset relative
       # to its trading frequency.
       ns_offset = self.getWakeFrequency()
-
+      if self.id == 1:
+       print("Agent {} sleeping until {}".format(self.id, self.kernel.fmtTime(self.mkt_open + ns_offset)))
       self.setWakeup(self.mkt_open + ns_offset)
-
+      
+    #  if initial_mkt_open != self.mkt_open:
+     #   print(msg.body['msg'])
+      #  print(initial_mkt_open,self.mkt_open)
+       # print("DAY 2 ###############################################################################")
 
   # Used by any Trading Agent subclass to query the last trade price for a symbol.
   # This activity is not logged.
@@ -270,6 +357,20 @@ class TradingAgent(FinancialAgent):
     self.sendMessage(self.exchangeID, Message({ "msg" : "QUERY_LAST_TRADE", "sender": self.id,
                                                 "symbol" : symbol })) 
 
+  def handleNewSplitMarketOrder(self, msg):
+    order = msg.body['order']
+    self.all_orders[order.order_id] = order
+    self.order_num += 1
+
+  def handleFilledOrder(self, msg):
+    order_id = msg.body['order_id']
+    self.all_orders[order_id].filled = True
+    self.all_orders[order_id].fill_price = msg.body['fill_price']
+    self.all_orders[order_id].fill_time = msg.body['fill_time']
+    self.all_orders[order_id].fill_quantity = msg.body['quantity']
+    self.all_orders[order_id].fill_type = msg.body['fill_type']
+    # print("Agent " + str(self.id) + " filled order " + str(order_id))
+    
 
   # Used by any Trading Agent subclass to query the current spread for a symbol.
   # This activity is not logged.
@@ -293,7 +394,9 @@ class TradingAgent(FinancialAgent):
   # The call may optionally specify an order_id (otherwise global autoincrement is used) and
   # whether cash or risk limits should be enforced or ignored for the order.
   def placeLimitOrder (self, symbol, quantity, is_buy_order, limit_price, order_id=None, ignore_risk = True, tag = None):
+    order_id = self.order_num
     order = LimitOrder(self.id, self.currentTime, symbol, quantity, is_buy_order, limit_price, order_id, tag)
+    self.order_num += 1
 
     if quantity > 0:
       # Test if this order can be permitted given our at-risk limits.
@@ -322,14 +425,14 @@ class TradingAgent(FinancialAgent):
       self.orders[order.order_id] = deepcopy(order)
       self.sendMessage(self.exchangeID, Message({ "msg" : "LIMIT_ORDER", "sender": self.id,
                                                   "order" : order })) 
-
+      self.all_orders[order.order_id] = self.orders[order.order_id]
       # Log this activity.
       if self.log_orders: self.logEvent('ORDER_SUBMITTED', order.to_dict())
 
     else:
       log_print ("TradingAgent ignored limit order of quantity zero: {}", order)
 
-  def placeMarketOrder(self, symbol, quantity, is_buy_order, order_id=None, ignore_risk = True, tag=None):
+  def placeMarketOrder(self, symbol, quantity, is_buy_order, order_id=None, ignore_risk = True, tag=None, best=None, delay=0):
     """
       Used by any Trading Agent subclass to place a market order. The market order is created as multiple limit orders
       crossing the spread walking the book until all the quantities are matched.
@@ -340,7 +443,9 @@ class TradingAgent(FinancialAgent):
       :param ignore_risk (bool):  Determines whether cash or risk limits should be enforced or ignored for the order
       :return:
     """
-    order = MarketOrder(self.id, self.currentTime, symbol, quantity, is_buy_order, order_id)
+    order_id=self.order_num
+    order = MarketOrder(self.id, self.currentTime, symbol, quantity, is_buy_order, order_id, best=best)
+    self.order_num += 1
     if quantity > 0:
       # compute new holdings
       new_holdings = self.holdings.copy()
@@ -357,8 +462,10 @@ class TradingAgent(FinancialAgent):
           log_print("TradingAgent ignored market order due to at-risk constraints: {}\n{}",
                     order, self.fmtHoldings(self.holdings))
           return
+
       self.orders[order.order_id] = deepcopy(order)
-      self.sendMessage(self.exchangeID, Message({"msg" : "MARKET_ORDER", "sender": self.id, "order": order}))
+      self.sendMessage(self.exchangeID, Message({"msg" : "MARKET_ORDER", "sender": self.id, "order": order}), delay=delay)
+ 
       if self.log_orders: self.logEvent('ORDER_SUBMITTED', order.to_dict())
     else:
       log_print("TradingAgent ignored market order of quantity zero: {}", order)
@@ -433,7 +540,6 @@ class TradingAgent(FinancialAgent):
     # Log this activity.
     if self.log_orders: self.logEvent('ORDER_ACCEPTED', order.to_dict())
 
-
     # We may later wish to add a status to the open orders so an agent can tell whether
     # a given order has been accepted or not (instead of needing to override this method).
 
@@ -464,6 +570,9 @@ class TradingAgent(FinancialAgent):
     # Remember that this has happened.
     self.mkt_closed = True
 
+    # Query when market opens and closes next.
+    self.sendMessage(self.exchangeID, Message({"msg": "WHEN_MKT_OPEN", "sender": self.id }))
+    self.sendMessage(self.exchangeID, Message({"msg": "WHEN_MKT_CLOSE", "sender": self.id }))
 
   # Handles QUERY_LAST_TRADE messages from an exchange agent.
   def queryLastTrade (self, symbol, price):
@@ -477,6 +586,11 @@ class TradingAgent(FinancialAgent):
 
       log_print ("Received daily close price of {} for {}.", self.last_trade[symbol], symbol)
 
+  def finalClose (self):
+    self.logEvent('MKT_CLOSED')
+
+    # Remember that this has happened.
+    self.mkt_closed = True
 
   # Handles QUERY_SPREAD messages from an exchange agent.
   def querySpread (self, symbol, price, bids, asks, book):

@@ -44,6 +44,7 @@ class OrderBook:
         }
 
     def handleLimitOrder(self, order):
+
         # Matches a limit order or adds it to the order book.  Handles partial matches piecewise,
         # consuming all possible shares at the best price before moving on, without regard to
         # order size "fit" or minimizing number of transactions.  Sends one notification per
@@ -70,13 +71,32 @@ class OrderBook:
         executed = []
 
         while matching:
-            matched_order = deepcopy(self.executeOrder(order))
+            matched_order = deepcopy(self.executeOrder(order))  
 
             if matched_order:
                 # Decrement quantity on new order and notify traders of execution.
                 filled_order = deepcopy(order)
                 filled_order.quantity = matched_order.quantity
                 filled_order.fill_price = matched_order.fill_price
+                filled_order.fill_time = self.owner.currentTime - filled_order.time_placed
+
+                filled_order.filled = True
+                # ensure change is permeated through all copies
+                id = filled_order.order_id 
+                a_id = filled_order.agent_id
+                self.owner.sendMessage(a_id, Message({"msg": "FILLED", "order_id": id, 
+                                                    "fill_price": filled_order.fill_price, 
+                                                    "fill_time": filled_order.fill_time, 
+                                                    "quantity": filled_order.quantity,
+                                                    "fill_type": "INSTANT"}))
+
+                id = matched_order.order_id 
+                a_id = matched_order.agent_id
+                self.owner.sendMessage(a_id, Message({"msg": "FILLED", "order_id": id, 
+                                                    "fill_price": filled_order.fill_price, 
+                                                    "fill_time": filled_order.fill_time, 
+                                                    "quantity": filled_order.quantity,
+                                                    "fill_type": "BOOK"}))
 
                 order.quantity -= filled_order.quantity
 
@@ -92,7 +112,10 @@ class OrderBook:
                 executed.append((filled_order.quantity, filled_order.fill_price))
 
                 if order.quantity <= 0:
+                    # Order completely filled
+                    
                     matching = False
+
 
             else:
                 # No matching order was found, so the new order enters the order book.  Notify the agent.
@@ -158,7 +181,7 @@ class OrderBook:
         self.prettyPrint()
 
     def handleMarketOrder(self, order):
-
+        #print(order.best)
         if order.symbol != self.symbol:
             log_print("{} order discarded.  Does not match OrderBook symbol: {}", order.symbol, self.symbol)
             return
@@ -171,6 +194,7 @@ class OrderBook:
 
         limit_orders = {} # limit orders to be placed (key=price, value=quantity)
         order_quantity = order.quantity
+        i = 0
         for price_level in orderbook_side:
             price, size = price_level[0], price_level[1]
             if order_quantity <= size:
@@ -182,9 +206,27 @@ class OrderBook:
                 order_quantity -= size
                 continue
         log_print("{} placing market order as multiple limit orders", order.symbol, order.quantity)
+        
+        best = order.best
+        order_num = order.order_id
         for lo in limit_orders.items():
             p, q = lo[0], lo[1]
-            limit_order = LimitOrder(order.agent_id, order.time_placed, order.symbol, q, order.is_buy_order, p)
+            if order.is_buy_order: 
+               # print("Price achieved: " + str(p) + " at time " + str(self.owner.currentTime.strftime("%H:%M:%S")))
+                if best is None: # first order to market
+                    slippage = 0    
+                else:
+                    slippage = p - best
+            else:
+                if best is None:
+                    slippage = 0
+                else:
+                    slippage = best - p
+
+            limit_order = LimitOrder(order.agent_id, order.time_placed, order.symbol, q, order.is_buy_order, p, order_id=order_num, slippage=slippage)
+            self.owner.sendMessage(order.agent_id,
+                                    Message({"msg": "NEW_SPLIT_MARKET_ORDER", "order": limit_order}))
+            order_num += 1
             self.handleLimitOrder(limit_order)
 
     def executeOrder(self, order):
@@ -219,6 +261,7 @@ class OrderBook:
             # Note that book[i] is a LIST of all orders (oldest at index book[i][0]) at the same price.
 
             # The matched order might be only partially filled. (i.e. new order is smaller)
+           # TODO: what is fill price for a partial fill?
             if order.quantity >= book[0][0].quantity:
                 # Consumed entire matched order.
                 matched_order = book[0].pop(0)
@@ -237,7 +280,9 @@ class OrderBook:
             # When two limit orders are matched, they execute at the price that
             # was being "advertised" in the order book.
             matched_order.fill_price = matched_order.limit_price
-
+            matched_order.fill_time = self.owner.currentTime - matched_order.time_placed
+            matched_order.slippage = 0
+            
             # Record the transaction in the order history and push the indices
             # out one, possibly truncating to the maximum history length.
 

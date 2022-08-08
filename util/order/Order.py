@@ -32,7 +32,12 @@ class Order:
         # Create placeholder fields that don't get filled in until certain
         # events happen.  (We could instead subclass to a special FilledOrder
         # class that adds these later?)
+        self.filled = False
         self.fill_price = None
+        self.fill_time = None
+        self.fill_quantity = None
+        self.fill_type = None # instant or to book (did it get filled from book or go to book to wait)
+        self.fill_percentage = None #TODO: add functionaility for partial fills
 
         # Tag: a free-form user-defined field that can contain any information relevant to the
         #      entity placing the order.  Recommend keeping it alphanumeric rather than
