@@ -446,8 +446,6 @@ class ExchangeAgent(FinancialAgent):
 
     if self.sim_days == self.current_day:
       # market will shut for last time if EOD
-      if self.currentTime > self.mkt_close:
-        print("MARKET CLOSED FOR DAY {}, SHUTTING DOWN".format(self.current_day))
       return self.currentTime > self.mkt_close 
 
     elif self.currentTime < self.mkt_open:

@@ -1,6 +1,6 @@
 from agent.FinancialAgent import FinancialAgent
 from message.Message import Message
-from util.OrderBook import OrderBook
+from util.RFQ import Request, Quote
 from util.util import log_print
 
 import datetime as dt
@@ -142,43 +142,15 @@ class ExchangeAgent(FinancialAgent):
                                                       "mkt_closed": True if currentTime > self.mkt_close else False}))
     
 
-    elif msg.body['msg'] == "RFQ":
-
-      order = msg.body['order'] # TODO: replace with RFQ class?
-      log_print("{} received RFQ: {}", self.name, order)
-      if order.symbol not in self.symbols:
-        log_print("RFQ discarded.  Unknown symbol: {}", order.symbol)
+    elif msg.body['msg'] == "request":
+      request = msg.body['request'] # TODO: replace with RFQ class?
+      log_print("{} received RFQ: {}", self.name, request)
+      if request.symbol not in self.symbols:
+        log_print("Request discarded.  Unknown symbol: {}", request.symbol)
       else:
-        # Hand the order to the order book for processing.
-        # self.publishOrderBookData()
-        #TODO: handle RFQ
+        # TODO: notify all agents (TODO: who are subscribed?) of request 
+        for agent_id in self.agents :
+          self.sendMessage(agent_id, Message({"msg": "request", "request": request}))
+       
         pass
 
-    elif msg.body['msg'] == "CANCEL_ORDER":
-      # Note: this is somewhat open to abuse, as in theory agents could cancel other agents' orders.
-      # An agent could also become confused if they receive a (partial) execution on an order they
-      # then successfully cancel, but receive the cancel confirmation first.  Things to think about
-      # for later...
-      order = msg.body['order']
-      log_print("{} received CANCEL_ORDER: {}", self.name, order)
-      if order.symbol not in self.order_books:
-        log_print("Cancellation request discarded.  Unknown symbol: {}", order.symbol)
-      else:
-        # Hand the order to the order book for processing.
-        self.order_books[order.symbol].cancelOrder(deepcopy(order))
-        self.publishOrderBookData()
-    elif msg.body['msg'] == 'MODIFY_ORDER':
-      # Replace an existing order with a modified order.  There could be some timing issues
-      # here.  What if an order is partially executed, but the submitting agent has not
-      # yet received the norification, and submits a modification to the quantity of the
-      # (already partially executed) order?  I guess it is okay if we just think of this
-      # as "delete and then add new" and make it the agent's problem if anything weird
-      # happens.
-      order = msg.body['order']
-      new_order = msg.body['new_order']
-      log_print("{} received MODIFY_ORDER: {}, new order: {}".format(self.name, order, new_order))
-      if order.symbol not in self.order_books:
-        log_print("Modification request discarded.  Unknown symbol: {}".format(order.symbol))
-      else:
-        self.order_books[order.symbol].modifyOrder(deepcopy(order), deepcopy(new_order))
-        self.publishOrderBookData()    

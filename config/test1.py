@@ -120,6 +120,9 @@ mkt_open = historical_date + pd.to_timedelta('9:00:00')
 mkt_close = historical_date +  pd.to_timedelta('16:00:00')
 day_length = mkt_close - mkt_open
 days = pd.to_timedelta(args.experiment_length)/day_length
+if days < 1:
+    days = 1
+    mkt_close = mkt_open + pd.to_timedelta(args.experiment_length)
 
 symbols = {symbol: {'r_bar': 1e4,   # base price of asset
                     'kappa': 1.67e-12,  

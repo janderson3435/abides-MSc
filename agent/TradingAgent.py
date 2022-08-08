@@ -533,6 +533,7 @@ class TradingAgent(FinancialAgent):
 
     # After execution, log holdings.
     self.logEvent('HOLDINGS_UPDATED', self.holdings)
+    self.logEvent('EXECUTION_TIMESTAMP', self.currentTime)
 
 
   # Handles ORDER_ACCEPTED messages from an exchange agent.  Subclasses may wish to extend.
