@@ -66,7 +66,7 @@ parser.add_argument('-t',
                     help='Stock Ticker')
 parser.add_argument('-e',
                     '--experiment_length',
-                    default='70:00:00', #TODO: odd times round up - not ideal for short tests
+                    default='70:00:00',
                     help='Experiment length')               
 parser.add_argument('-n',
                     '--noise',
@@ -118,8 +118,12 @@ def random_institution_start_cash(institution_cash = 5000000000): # $50,000,000
 # Oracle
 mkt_open = historical_date + pd.to_timedelta('9:00:00')
 mkt_close = historical_date +  pd.to_timedelta('16:00:00')
+
 day_length = mkt_close - mkt_open
-days = pd.to_timedelta(args.experiment_length)/day_length
+days = pd.to_timedelta(args.experiment_length)/day_length 
+
+# If experiment is less than 1 day long in length, run fraction of one trading day
+# TODO: allow 2.5 day runs?
 if days < 1:
     days = 1
     mkt_close = mkt_open + pd.to_timedelta(args.experiment_length)
@@ -276,7 +280,7 @@ for sim in range(int(args.iterations)):
     print("Simulation iteration {} starting".format(sim))
     agents1 = copy.deepcopy(agents)
     if log_dir is not None:
-        log_dir = args.log_dir + '_{}'.format(sim + 1)
+        log_dir = "C:\Users\joest\Documents\MSc Thesis Logs\\" + args.log_dir + '_{}'.format(sim + 1)
     kernel.runner(agents=agents1,
                 startTime=kernelStartTime,
                 stopTime=kernelStopTime,
