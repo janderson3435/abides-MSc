@@ -31,7 +31,7 @@ class ExchangeAgent(FinancialAgent):
     # Do not request repeated wakeup calls.
     self.reschedule = False
 
-    # Store this exchange's open and close times.
+    # Store this exchange's intial open and close times.
     self.mkt_open = mkt_open
     self.mkt_close = mkt_close
     self.sim_days = days
@@ -170,7 +170,6 @@ class ExchangeAgent(FinancialAgent):
       # check if market has shut for last time
       # TODO: improve this so it works with getMarketClosed function 
       if self.currentTime > self.mkt_close and self.currentTime > self.mkt_open and (self.sim_days == self.current_day):
-        # TODO: never enters this block?
         self.sendMessage(msg.body['sender'], Message({"msg": "FINAL_CLOSE"}))
         return
 
@@ -268,8 +267,6 @@ class ExchangeAgent(FinancialAgent):
         log_print("Market Order discarded.  Unknown symbol: {}", order.symbol)
       else:
         # Hand the market order to the order book for processing.
-        # TODO: arbitary delay conditional on sender type msg.body['sender'] == "Retail":
-        
         self.order_books[order.symbol].handleMarketOrder(deepcopy(order))
         self.publishOrderBookData()
     elif msg.body['msg'] == "CANCEL_ORDER":
