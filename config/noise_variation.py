@@ -299,7 +299,7 @@ for sim in range(int(args.iterations)):
     print("Simulation iteration {} starting".format(sim))
     agents1 = copy.deepcopy(agents)
     if log_dir is not None:
-        log_dir = args.log_dir + '_{}'.format(sim + 1)
+        log_dir = r"C:\\Users\\joest\Documents\\MSc Thesis Logs\\" + args.log_dir + '_{}'.format(sim + 1)
     kernel.runner(agents=agents1,
                 startTime=kernelStartTime,
                 stopTime=kernelStopTime,
