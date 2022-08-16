@@ -10,9 +10,11 @@ silent_mode = False
 
 class MarketOrder(Order):
 
-    def __init__(self, agent_id, time_placed, symbol, quantity, is_buy_order, order_id=None, tag=None, best=None):
+    def __init__(self, agent_id, time_placed, symbol, quantity, is_buy_order, order_id=None, tag=None, best=None, combined=False, slippage=0):
         super().__init__(agent_id, time_placed, symbol, quantity, is_buy_order, order_id=order_id, tag=tag)
         self.best = best
+        self.combined = combined
+        self.slippage = 0
     def __str__(self):
         if silent_mode: return ''
 

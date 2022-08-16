@@ -15,7 +15,7 @@ class Order:
 
         # Time at which the order was created by the agent.
         self.time_placed: pd_Timestamp = time_placed
-
+ 
         # Equity symbol for the order.
         self.symbol = symbol
 
@@ -45,7 +45,7 @@ class Order:
         #      order and in all logging mechanisms.  Intent: for strategy agents to set tags
         #      to help keep track of the intent of particular orders, to simplify their code.
         self.tag = tag
-
+        
     def generateOrderId(self):
         # generates a unique order ID if the order ID is not specified
         if not Order.order_id in Order._order_ids:

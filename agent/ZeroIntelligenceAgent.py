@@ -72,32 +72,10 @@ class ZeroIntelligenceAgent(TradingAgent):
                                                                  sigma_n=0,
                                                                  random_state=self.random_state)
 
-        # Start with surplus as private valuation of shares held.
-        if H > 0:
-            surplus = sum([self.theta[x + self.q_max - 1] for x in range(1, H + 1)])
-        elif H < 0:
-            surplus = -sum([self.theta[x + self.q_max - 1] for x in range(H + 1, 1)])
-        else:
-            surplus = 0
-
-        log_print("surplus init: {}", surplus)
-
-        # Add final (real) fundamental value times shares held.
-        surplus += rT * H
-
-        log_print("surplus after holdings: {}", surplus)
-
-        # Add ending cash value and subtract starting cash value.
-        surplus += self.holdings['CASH'] - self.starting_cash
-        cash = self.markToMarket(self.holdings)
-        gain = cash - self.starting_cash
-        percentage_profit = round(100*(gain)/self.starting_cash, 5)
-        # BUG: gives 0 from rounding error
-        self.logEvent('FINAL_PCT_PROFIT', percentage_profit, True) # add these 2 lines to agents
-        
+       
         log_print(
-            "{} final report.  Holdings {}, end cash {}, start cash {}, final fundamental {}, preferences {}, surplus {}",
-            self.name, H, self.holdings['CASH'], self.starting_cash, rT, self.theta, surplus)
+            "{} final report.  Holdings {}, end cash {}, start cash {}, final fundamental {}, preferences {}",
+            self.name, H, self.holdings['CASH'], self.starting_cash, rT, self.theta)
 
     def wakeup(self, currentTime):
         # Parent class handles discovery of exchange times and market_open wakeup call.
@@ -145,7 +123,8 @@ class ZeroIntelligenceAgent(TradingAgent):
         # Issue cancel requests for any open orders.  Don't wait for confirmation, as presently
         # the only reason it could fail is that the order already executed.  (But requests won't
         # be generated for those, anyway, unless something strange has happened.)
-        self.cancelOrders()
+        if not self.mkt_reopening:
+            self.cancelOrders()
 
         # The ZI agent doesn't try to maintain a zero position, so there is no need to exit positions
         # as some "active trading" agents might.  It might exit a position based on its order logic,
@@ -176,12 +155,13 @@ class ZeroIntelligenceAgent(TradingAgent):
         log_print("{} observed {} at {}", self.name, obs_t, self.currentTime)
 
         # Flip a coin to decide if we will buy or sell a unit at this time.
-        q = int(self.getHoldings(self.symbol) / 100) # q now represents an index to how many 100 lots are held
-
+        q = int(self.getHoldings(self.symbol)) # q now represents lots held
         if q >= self.q_max:
             buy = False
             log_print("Long holdings limit: agent will SELL")
+            q = self.q_max #  need this so don't go out of bounds of theta array - TODO: what are consequences of this 
         elif q <= -self.q_max:
+            q = -self.q_max
             buy = True
             log_print("Short holdings limit: agent will BUY")
         else:
@@ -225,7 +205,8 @@ class ZeroIntelligenceAgent(TradingAgent):
         #       impose a maximum forward delta, like ten minutes or so.  This could make
         #       them think more like traders and less like long-term investors.  Add
         #       this line of code (keeping the max() line above) to try it.
-        # delta = min(delta, 1000000000 * 60 * 10)
+        if self.type == "HeuristicBeliefAgent":
+          delta = min(delta, 1000000000 * 60 * 10)      # IMPORTANT CHANGE FOR MY SIMS
 
         r_T = (1 - (1 - self.kappa) ** delta) * self.r_bar
         r_T += ((1 - self.kappa) ** delta) * self.r_t

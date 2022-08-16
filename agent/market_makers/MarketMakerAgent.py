@@ -26,9 +26,9 @@ class MarketMakerAgent(TradingAgent):
     """
 
     def __init__(self, id, name, type, symbol, starting_cash, min_size, max_size , wake_up_freq='1s',
-                 subscribe=False, subscribe_freq=10e9, subscribe_num_levels=5, log_orders=False, random_state=None):
+                 subscribe=False, subscribe_freq=10e9, subscribe_num_levels=5, log_orders=False, random_state=None, log_to_file=True):
 
-        super().__init__(id, name, type, starting_cash=starting_cash, log_orders=log_orders, random_state=random_state)
+        super().__init__(id, name, type, starting_cash=starting_cash, log_orders=log_orders, random_state=random_state, log_to_file=log_to_file)
         self.symbol = symbol      # Symbol traded
         self.min_size = min_size  # Minimum order size
         self.max_size = max_size  # Maximum order size

@@ -18,10 +18,11 @@ class RetailExecutionAgent(TradingAgent):
     def __init__(self, id, name, type, symbol='IBM', starting_cash=100000, sigma_n=1000,
                  r_bar=100000, kappa=0.05, sigma_s=100000, q_max=10,
                  sigma_pv=5000000, R_min=0, R_max=250, eta=1.0,
-                 lambda_a=0.005, log_orders=False, random_state=None, execution=True, risk_factor=0.1, order_type=None, retail_delay=1000000000):
+                 lambda_a=0.005, log_orders=False, random_state=None, execution=True, risk_factor=0.1, order_type=None, retail_delay=1000000000, 
+                 brokerID=None):
 
         # Base class init.
-        super().__init__(id, name, type, starting_cash=starting_cash, log_orders=log_orders, random_state=random_state, execution=execution)
+        super().__init__(id, name, type, starting_cash=starting_cash, log_orders=log_orders, random_state=random_state, execution=execution, brokerID=brokerID)
 
         # Store important parameters particular to the ZI agent.
         self.symbol = symbol  # symbol to trade        
@@ -38,8 +39,6 @@ class RetailExecutionAgent(TradingAgent):
         self.risk_factor = risk_factor # proportion of portfolio to move on each trade
         #TODO: add parameters for length of position hold 
         
-        self.slippages = []
-        self.execution_times = []
         self.order_type = order_type # 'limit' or 'market', default market. limit guarantees 0 slippage but less likely to fill
         self.retail_delay = retail_delay # delay for slippage simulation
 
@@ -85,40 +84,18 @@ class RetailExecutionAgent(TradingAgent):
                                                                  sigma_n=0,
                                                                  random_state=self.random_state)
 
-        # Start with surplus as private valuation of shares held.
-        if H > 0:
-            surplus = sum([self.theta[x + self.q_max - 1] for x in range(1, H + 1)])
-        elif H < 0:
-            surplus = -sum([self.theta[x + self.q_max - 1] for x in range(H + 1, 1)])
-        else:
-            surplus = 0
-
-        log_print("surplus init: {}", surplus)
-
-        # Add final (real) fundamental value times shares held.
-        surplus += rT * H
-
-        log_print("surplus after holdings: {}", surplus)
-
-        # Add ending cash value and subtract starting cash value.
-        surplus += self.holdings['CASH'] - self.starting_cash
-        cash = self.markToMarket(self.holdings)
-        gain = cash - self.starting_cash
-        percentage_profit = round(100*(gain)/self.starting_cash, 5)
-        self.logEvent('FINAL_PCT_PROFIT', percentage_profit, True) # add these 2 lines to agents
-        
 
         log_print(
             "{} final report.  Holdings {}, end cash {}, start cash {}, final fundamental {}, preferences {}, surplus {}",
-            self.name, H, self.holdings['CASH'], self.starting_cash, rT, self.theta, surplus)
+            self.name, H, self.holdings['CASH'], self.starting_cash, rT, self.theta)
 
 
     def wakeup(self, currentTime):
-        # Parent class handles discovery of exchange times and market_open wakeup call.
-        super().wakeup(currentTime)
-
+        # Parent class handles discovery of exchange times and market_open wakeup call
+        can_trade = super().wakeup(currentTime)
         self.state = 'INACTIVE'
 
+        
         if not self.mkt_open or not self.mkt_close:
             # TradingAgent handles discovery of exchange times.
             return
@@ -136,7 +113,7 @@ class RetailExecutionAgent(TradingAgent):
         if self.mkt_closed and (self.symbol in self.daily_close_price):
             # Market is closed and we already got the daily close price.
             return
-
+       
         # Schedule a wakeup for the next time this agent should arrive at the market
         # (following the conclusion of its current activity cycle).
         # We do this early in case some of our expected message responses don't arrive.
@@ -159,7 +136,9 @@ class RetailExecutionAgent(TradingAgent):
         # Issue cancel requests for any open orders.  Don't wait for confirmation, as presently
         # the only reason it could fail is that the order already executed.  (But requests won't
         # be generated for those, anyway, unless something strange has happened.)
-        self.cancelOrders()
+        
+        if not self.mkt_reopening:
+            self.cancelOrders() # TODO: CHANGE FOR MULTIDAY TESTS - order should stay open overnight?
 
         # The ZI agent doesn't try to maintain a zero position, so there is no need to exit positions
         # as some "active trading" agents might.  It might exit a position based on its order logic,
@@ -172,6 +151,7 @@ class RetailExecutionAgent(TradingAgent):
         # may want to do something different.
 
         if type(self) == RetailExecutionAgent:
+            
             self.getCurrentSpread(self.symbol)
             self.state = 'AWAITING_SPREAD'
         else:
@@ -190,7 +170,7 @@ class RetailExecutionAgent(TradingAgent):
         log_print("{} observed {} at {}", self.name, obs_t, self.currentTime)
 
         # Flip a coin to decide if we will buy or sell a unit at this time.
-        q = int(self.getHoldings(self.symbol) / 100) # q now represents an index to how many 100 lots are held
+        q = int(self.getHoldings(self.symbol)) # q now represents lots held
 
         if q >= self.q_max:
             buy = False

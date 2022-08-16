@@ -18,11 +18,11 @@ mem_hist = Memory(cachedir='./.cached_plot_hist', verbose=0)
 mem_sim = Memory(cachedir='./.cached_plot_sim', verbose=0)
 
 
-PRINT_BASELINE = True
-PRINT_DELTA_ONLY = True
+PRINT_BASELINE = False
+PRINT_DELTA_ONLY = False
 
 BETWEEN_START = pd.to_datetime('09:30').time()
-BETWEEN_END = pd.to_datetime('09:30:00.000001').time()
+BETWEEN_END = pd.to_datetime('09:30:01').time()
 
 # Linewidth for plots.
 LW = 2

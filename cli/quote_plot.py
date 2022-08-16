@@ -60,7 +60,7 @@ def read_simulated_quotes (file, symbol):
 # Main program starts here.
 
 if len(sys.argv) < 2:
-  print ("Usage: python ticker_plot.py <Ticker symbol> <Simulator DataFrame file>")
+  print ("Usage: python quote_plot.py <Ticker symbol> <Simulator DataFrame file>")
   sys.exit()
 
 # TODO: only really works for one symbol right now.

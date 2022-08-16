@@ -1,9 +1,7 @@
-# Test-1 :
-# - 1     Exchange Agent
-# - 1     Market Maker Agent
-# - 30    ZI Agent (retail)
-# - 70   HBL Agent (institutional)
-# noise
+# Experiment using brokers 
+# Retail traders can no longer send odd lots straight to exchange
+# Broker must combine odd lots to even lots 
+
 
 import argparse
 import numpy as np
@@ -26,6 +24,7 @@ from agent.RetailExecutionAgent import RetailExecutionAgent
 from agent.HeuristicBeliefLearningAgent import HeuristicBeliefLearningAgent
 from agent.examples.MomentumAgent import MomentumAgent
 from agent.NoiseAgent import NoiseAgent
+from agent.brokers.BrokerAgent import BrokerAgent
 
 ########################################################################################################################
 ############################################### GENERAL CONFIG #########################################################
@@ -77,17 +76,19 @@ parser.add_argument('-i',
                     '--iterations',
                     default=1,
                     help='Number of repeats of experiment')                             
-        
+parser.add_argument('-o',
+                    '--odds',
+                    default=0,
+                    help='Allow odd lots') # without odd lots, trader must go through broker that combines orders
+
 args, remaining_args = parser.parse_known_args()
 if args.config_help:
     parser.print_help()
     sys.exit()
 
-
- 
 log_dir = args.log_dir  # Requested log directory. # TODO: if it exists, overwrite
 seed = args.seed  # Random seed specification on the command line.
-if not seed: seed = int(pd.Timestamp.now().timestamp() * 1000000) % (2 ** 16 - 1)
+if not seed: seed = int(pd.Timestamp.now().timestamp() * 1000000) % (2 ** 32 - 1)
 np.random.seed(seed)
 
 util.silent_mode = not args.verbose
@@ -114,18 +115,15 @@ def random_retail_start_cash(retail_cash = 250000): # $2,500
 
 def random_institution_start_cash(institution_cash = 5000000000): # $50,000,000
     # Draws start cash from a normal distribution around institution_cash
-    c = int(np.random.lognormal(np.log(institution_cash/100),1)) * 100
-    return  c # TODO: improve?
+    return int(np.random.normal(institution_cash, institution_cash * 0.1)) # TODO: improve?
 
 # Oracle
-mkt_open = historical_date + pd.to_timedelta('09:00:00')
-mkt_close = historical_date +  pd.to_timedelta('16:00:00')
+mkt_open = historical_date + pd.to_timedelta('9:00:00')
+mkt_close = historical_date +  pd.to_timedelta('09:10:00')
 
 day_length = mkt_close - mkt_open
 days = pd.to_timedelta(args.experiment_length)/day_length 
 
-# If experiment is less than 1 day long in length, run fraction of one trading day
-# TODO: allow 2.5 day runs?
 if days < 1:
     days = 1
     mkt_close = mkt_open + pd.to_timedelta(args.experiment_length)
@@ -140,13 +138,13 @@ symbols = {symbol: {'r_bar': 1e4,   # base price of asset
                     'megashock_var': 5e4,
                     'random_state': np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                  dtype='uint64'))}}
-oracle = SparseMeanRevertingOracle(mkt_open, mkt_close, symbols)
+oracle = SparseMeanRevertingOracle(mkt_open, mkt_close + pd.Timedelta(days, unit='D'), symbols)
 
 # 1) 1 Exchange Agent
 stream_history_length = 10
 
 agents.extend([ExchangeAgent(id=0,
-                             name="EXCHANGE",
+                             name="EXCHANGE_AGENT",
                              type="ExchangeAgent",
                              mkt_open=mkt_open,
                              mkt_close=mkt_close,
@@ -155,18 +153,29 @@ agents.extend([ExchangeAgent(id=0,
                              stream_history=stream_history_length,
                              pipeline_delay=0,
                              computation_delay=0,
-                             wide_book=False, # check this param ?
-                             #book_freq=0, # 'S' for second resolution, none for no recording of order book (takes long and don't need it for plotting - exchange saves best bids and ask)
+                             wide_book=False,
+                             #book_freq=0,
                              days=days,
                              random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                        dtype='uint64')))])
 agent_types.extend("ExchangeAgent")
 agent_count += 1
 
+# 1.1) 1 broker agent - all retail go through this
+agents.extend([BrokerAgent(id=1,
+                             name="BROKER_AGENT",
+                             type="BrokerAgent",
+                             exchange=agents[0],
+                             random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
+                                                                                       dtype='uint64')))])
+agent_types.extend("BrokerAgent")
+broker_id = 1 
+agent_count += 1
+
 # 2) 1 Market Maker Agent
 num_mm_agents = 1
 agents.extend([MarketMakerAgent(id=j,
-                                name="MARKET_MAKER_{}".format(j),
+                                name="MARKET_MAKER_AGENT_{}".format(j),
                                 type='MarketMakerAgent',
                                 symbol=symbol,
                                 starting_cash=mm_cash,
@@ -198,10 +207,11 @@ agents.extend([RetailExecutionAgent(id=j,
                                      R_min=0,
                                      R_max=100,
                                      eta=1,
-                                     lambda_a=1e-13,        # determines how frequently agent wakes up and considers trading, this gives range of 5 mins to 10 hours
+                                     lambda_a=1e-13,
                                      log_orders=False,
                                      execution=True,
-                                     retail_delay=2000000000, # 2 second delay on messages to simulate real life order routing. Will be altered with experiments
+                                   #  retail_delay=2000000000, # 2 second delay on messages
+                                     brokerID= broker_id,       # broker for this experiment type - shouldn't need above delay anymore
                                      random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                                dtype='uint64')))
                for j in range(agent_count, agent_count + num_retail_agents)])
@@ -211,7 +221,7 @@ agent_count += num_retail_agents
 # 4) 70 Heuristic Belief Learning Agents    - smarter, represent institutions 
 num_hbl_agents = 70
 agents.extend([HeuristicBeliefLearningAgent(id=j,
-                                            name="HBL_{}".format(j),
+                                            name="HBL_AGENT_{}".format(j),
                                             type="HeuristicBeliefAgent",
                                             symbol=symbol,
                                             starting_cash=random_institution_start_cash(), 
@@ -224,10 +234,10 @@ agents.extend([HeuristicBeliefLearningAgent(id=j,
                                             R_min=0,
                                             R_max=100,
                                             eta=1,
-                                            lambda_a=1e-12, # returns between 1 minute and 1 hour later
-                                            L=5,
+                                            lambda_a=1e-12,
+                                            L=2,
+                                            risk_factor=0.1,
                                             log_orders=False,
-                                            risk_factor=0.1,       
                                             random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32,
                                                                                                       dtype='uint64')))
                for j in range(agent_count, agent_count + num_hbl_agents)])
@@ -238,7 +248,7 @@ agent_count += num_hbl_agents
 if bool(int(args.noise)):
     num_noise = 900
     agents.extend([NoiseAgent(id=j,
-                            name="NOISE_{}".format(j),
+                            name="NoiseAgent {}".format(j),
                             type="NoiseAgent",
                             symbol=symbol,
                             wakeup_time=util.get_wake_time(mkt_open, mkt_close),
@@ -282,9 +292,9 @@ latency_model = LatencyModel(latency_model='deterministic',
 # KERNEL
 for sim in range(int(args.iterations)):
     print("Simulation iteration {} starting".format(sim))
-    agents1 = copy.deepcopy(agents)
+    agents1 = copy.deepcopy(agents) # ensure new agents 
     if log_dir is not None:
-        # log_dir = r"C:\\Users\\joest\Documents\\MSc Thesis Logs\\" + args.log_dir + '_{}'.format(sim + 1)
+        #log_dir = r"C:\\Users\\joest\Documents\\MSc Thesis Logs\\" + args.log_dir + '_{}'.format(sim + 1)
         log_dir = args.log_dir + '_{}'.format(sim + 1)
     kernel.runner(agents=agents1,
                 startTime=kernelStartTime,

@@ -82,21 +82,24 @@ class OrderBook:
 
                 filled_order.filled = True
                 # ensure change is permeated through all copies
-                id = filled_order.order_id 
-                a_id = filled_order.agent_id
-                self.owner.sendMessage(a_id, Message({"msg": "FILLED", "order_id": id, 
+                self.owner.sendMessage(filled_order.agent_id, Message({"msg": "FILLED", "order_id": filled_order.order_id , 
+                                                    "sender":self.owner.id,
                                                     "fill_price": filled_order.fill_price, 
                                                     "fill_time": filled_order.fill_time, 
                                                     "quantity": filled_order.quantity,
-                                                    "fill_type": "INSTANT"}))
-
-                id = matched_order.order_id 
-                a_id = matched_order.agent_id
-                self.owner.sendMessage(a_id, Message({"msg": "FILLED", "order_id": id, 
+                                                    "fill_type": "INSTANT",
+                                                    "who": matched_order.agent_id}))
+                closed_time = pd.Timedelta(24, unit = 'H') - (self.owner.mkt_close - self.owner.mkt_open)
+                if matched_order.fill_time > closed_time:
+                    # order was filled over multiple days
+                    matched_order.fill_time = matched_order.fill_time - closed_time
+                self.owner.sendMessage(matched_order.agent_id, Message({"msg": "FILLED", "order_id": matched_order.order_id, 
+                                                    "sender":self.owner.id,             
                                                     "fill_price": filled_order.fill_price, 
-                                                    "fill_time": filled_order.fill_time, 
+                                                    "fill_time": matched_order.fill_time, 
                                                     "quantity": filled_order.quantity,
-                                                    "fill_type": "BOOK"}))
+                                                    "fill_type": "BOOK",
+                                                    "who": filled_order.agent_id}))
 
                 order.quantity -= filled_order.quantity
 
@@ -104,9 +107,9 @@ class OrderBook:
                 log_print("SENT: notifications of order execution to agents {} and {} for orders {} and {}",
                           filled_order.agent_id, matched_order.agent_id, filled_order.order_id, matched_order.order_id)
 
-                self.owner.sendMessage(order.agent_id, Message({"msg": "ORDER_EXECUTED", "order": filled_order}))
+                self.owner.sendMessage(order.agent_id, Message({"msg": "ORDER_EXECUTED", "sender":self.owner.id, "order": filled_order}))
                 self.owner.sendMessage(matched_order.agent_id,
-                                       Message({"msg": "ORDER_EXECUTED", "order": matched_order}))
+                                       Message({"msg": "ORDER_EXECUTED", "sender":self.owner.id, "order": matched_order}))
 
                 # Accumulate the volume and average share price of the currently executing inbound trade.
                 executed.append((filled_order.quantity, filled_order.fill_price))
@@ -125,7 +128,7 @@ class OrderBook:
                 log_print("SENT: notifications of order acceptance to agent {} for order {}",
                           order.agent_id, order.order_id)
 
-                self.owner.sendMessage(order.agent_id, Message({"msg": "ORDER_ACCEPTED", "order": order}))
+                self.owner.sendMessage(order.agent_id, Message({"msg": "ORDER_ACCEPTED", "sender":self.owner.id, "order": order}))
 
                 matching = False
 
@@ -172,8 +175,7 @@ class OrderBook:
                 for quote, volume in self.getInsideAsks():
                     if quote in row:
                         if row[quote] is not None:
-                            print(
-                                "WARNING: THIS IS A REAL PROBLEM: an order book contains bids and asks at the same quote price!")
+                            print("WARNING: THIS IS A REAL PROBLEM: an order book contains bids and asks at the same quote price!")
                     row[quote] = volume
                     self.quotes_seen.add(quote)
                 self.book_log.append(row)
@@ -181,7 +183,7 @@ class OrderBook:
         self.prettyPrint()
 
     def handleMarketOrder(self, order):
-        #print(order.best)
+
         if order.symbol != self.symbol:
             log_print("{} order discarded.  Does not match OrderBook symbol: {}", order.symbol, self.symbol)
             return
@@ -225,7 +227,7 @@ class OrderBook:
 
             limit_order = LimitOrder(order.agent_id, order.time_placed, order.symbol, q, order.is_buy_order, p, order_id=order_num, slippage=slippage)
             self.owner.sendMessage(order.agent_id,
-                                    Message({"msg": "NEW_SPLIT_MARKET_ORDER", "order": limit_order}))
+                                    Message({"msg": "NEW_SPLIT_MARKET_ORDER", "sender":self.owner.id,"order": limit_order}))
             order_num += 1
             self.handleLimitOrder(limit_order)
 
@@ -342,7 +344,7 @@ class OrderBook:
                     book[i].append(order)
                     break
 
-    def cancelOrder(self, order):
+    def cancelOrder(self, order, quiet=False):
         # Attempts to cancel (the remaining, unexecuted portion of) a trade in the order book.
         # By definition, this pretty much has to be a limit order.  If the order cannot be found
         # in the order book (probably because it was already fully executed), presently there is
@@ -381,13 +383,15 @@ class OrderBook:
                         # If the cancelled price now has no orders, remove it completely.
                         if not book[i]:
                             del book[i]
+                        
+                        if not quiet:
+                            log_print("CANCELLED: order {}", order)
+                            log_print("SENT: notifications of order cancellation to agent {} for order {}",
+                                    cancelled_order.agent_id, cancelled_order.order_id)
 
-                        log_print("CANCELLED: order {}", order)
-                        log_print("SENT: notifications of order cancellation to agent {} for order {}",
-                                  cancelled_order.agent_id, cancelled_order.order_id)
 
-                        self.owner.sendMessage(order.agent_id,
-                                               Message({"msg": "ORDER_CANCELLED", "order": cancelled_order}))
+                            self.owner.sendMessage(order.agent_id,
+                                                Message({"msg": "ORDER_CANCELLED", "sender":self.owner.id,"order": cancelled_order}))
                         # We found the order and cancelled it, so stop looking.
                         self.last_update_ts = self.owner.currentTime
                         return
@@ -410,7 +414,7 @@ class OrderBook:
                             log_print("SENT: notifications of order modification to agent {} for order {}",
                                       new_order.agent_id, new_order.order_id)
                             self.owner.sendMessage(order.agent_id,
-                                                   Message({"msg": "ORDER_MODIFIED", "new_order": new_order}))
+                                                   Message({"msg": "ORDER_MODIFIED", "sender":self.owner.id,"new_order": new_order}))
         if order.is_buy_order:
             self.bids = book
         else:
@@ -602,3 +606,13 @@ class OrderBook:
 
         log_print(book)
 
+    def getBestBid(self):
+        if len(self.getInsideBids()) == 0:
+            return None
+        return self.getInsideBids()[0][0]
+
+    def getBestAsk(self):
+        if len(self.getInsideAsks()) == 0:
+            # no asks in book
+            return None
+        return self.getInsideAsks()[0][0]

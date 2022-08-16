@@ -17,13 +17,15 @@ import numpy as np
 # implementing a strategy without too much bookkeeping.
 class TradingAgent(FinancialAgent):
 
-  def __init__(self, id, name, type, random_state=None, starting_cash=100000, log_orders=False, log_to_file=True, execution=True):
+  def __init__(self, id, name, type, random_state=None, starting_cash=100000, log_orders=False, log_to_file=True, execution=True, brokerID=None):
     # Base class init.
     super().__init__(id, name, type, random_state, log_to_file)
 
     # We don't yet know when the exchange opens or closes.
     self.mkt_open = None
     self.mkt_close = None
+    self.mkt_reopening = False
+    self.final_price = None
 
     self.order_num = id * 1000  # 1000 current max orders per agent, needed so order ids don't overlap - TODO: better solution
     self.execution = execution
@@ -107,6 +109,7 @@ class TradingAgent(FinancialAgent):
     # as it will go away.
     self.book = ''
 
+    self.brokerID = brokerID # if this agent has a broker, orders are sent to it rather than the exchange
 
   # Simulation lifecycle messages.
 
@@ -134,12 +137,16 @@ class TradingAgent(FinancialAgent):
     self.logEvent('FINAL_CASH_POSITION', self.holdings['CASH'], True)
 
     # Mark to market.
-    cash = self.markToMarket(self.holdings)
+    # get price from exchange
 
+
+    cash = self.markToMarket(self.holdings, use_price=self.final_price)
     self.logEvent('ENDING_CASH', dollarize(int(cash)), True)
-    print ("Final holdings for {}: {}.  Marked to market: {}".format(self.name, self.fmtHoldings(self.holdings),
-                                                                     cash))
+    #print ("Final holdings for {}: {}.  Marked to market: {}".format(self.name, self.fmtHoldings(self.holdings),cash))
     gain = cash - self.starting_cash
+
+    
+        
 
     # Log executions
     if self.execution:
@@ -160,7 +167,7 @@ class TradingAgent(FinancialAgent):
                 self.slippages.append(o.slippage)
                 self.prices.append(o.fill_price)
                 self.times.append(o.fill_time) # dont need days 
-                self.sizes.append(o.quantity)
+                self.sizes.append(o.fill_quantity)
 
                 if o.fill_type == "BOOK":
                     self.book_count += 1
@@ -180,7 +187,7 @@ class TradingAgent(FinancialAgent):
             return pct_in, pct_out
 
         if not(flag):
-            self.logEvent("No orders executed") 
+            self.logEvent("NONE_EXECUTED") 
         else:
             #log_print(len("EXECUTION")*"=\n" + "EXECUTION\n" + len("EXECUTION")*"=")
             #print(self.slippages)
@@ -197,7 +204,11 @@ class TradingAgent(FinancialAgent):
             self.logEvent('AVG_SIZE', np.mean(self.sizes), True)
           #  self.logEvent('MAX_EXECUTION_TIME', np.max(self.times).total_seconds(), True)
             self.logEvent('SLIP_ADJ_PCT_PROFIT', round(100*(np.sum(self.slippages) + gain)/self.starting_cash, 5), True)
-   
+    
+    percentage_profit = round(100*(gain)/self.starting_cash, 5)
+      # BUG: gives 0 from rounding error
+    self.logEvent('FINAL_PCT_PROFIT', percentage_profit, True) # add these 2 lines to agents
+
     # Record final results for presentation/debugging.  This is an ugly way
     # to do this, but it is useful for now.
     mytype = self.type
@@ -214,7 +225,6 @@ class TradingAgent(FinancialAgent):
 
   def wakeup (self, currentTime):
     super().wakeup(currentTime)
-    
     if self.first_wake:
       # Log initial holdings.
       self.logEvent('HOLDINGS_UPDATED', self.holdings)
@@ -225,20 +235,18 @@ class TradingAgent(FinancialAgent):
       self.sendMessage(self.exchangeID, Message({ "msg" : "WHEN_MKT_OPEN", "sender": self.id }))
       self.sendMessage(self.exchangeID, Message({ "msg" : "WHEN_MKT_CLOSE", "sender": self.id }))
 
-    elif self.mkt_closed:
+    elif self.mkt_closed and self.mkt_reopening:
+      
       # Can only enter this after full market day - mkt_close only set at EOD 
       # check if its open by our records (should have been reset for next day before wakeup was set)
-      if self.mkt_open <= currentTime and self.mkt_close >= currentTime:    
-        if self.id == 1:
-          print("Agent {} waking up for mkt open at {}".format(self.id, currentTime)) # this won't work on first day as elif,  don't be alarmed
-          print(self.mkt_open)
-        self.mkt_closed = False
+      if self.mkt_open <= currentTime and self.mkt_close >= currentTime:  
 
+        self.mkt_closed = False
 
     # For the sake of subclasses, TradingAgent now returns a boolean
     # indicating whether the agent is "ready to trade" -- has it received
     # the market open and closed times, and is the market not already closed.
-    return (self.mkt_open and self.mkt_close) and not self.mkt_closed
+    return (self.mkt_open and self.mkt_close) and not self.mkt_closed 
 
   def requestDataSubscription(self, symbol, levels, freq):
       self.sendMessage(recipientID = self.exchangeID,
@@ -262,7 +270,6 @@ class TradingAgent(FinancialAgent):
     # Record market open or close times.
     if msg.body['msg'] == "WHEN_MKT_OPEN":
       self.mkt_open = msg.body['data']
-
       log_print ("Recorded market open: {}", self.kernel.fmtTime(self.mkt_open))
 
     elif msg.body['msg'] == "WHEN_MKT_CLOSE":
@@ -299,31 +306,37 @@ class TradingAgent(FinancialAgent):
     elif msg.body['msg'] == "FINAL_CLOSE":
       # We've tried to ask the exchange for something after it closed.  Remember this
       # so we stop asking for things that can't happen.
+      final_prices = msg.body['data']
+      for p, s in final_prices:
+        if s == self.symbol:
+          self.final_close = p
+          break
+      self.mkt_reopening = False
       self.finalClose()
 
     elif msg.body['msg'] == 'QUERY_LAST_TRADE':
       # Call the queryLastTrade method, which subclasses may extend.
       # Also note if the market is closed.
-      if msg.body['mkt_closed']: self.mkt_closed = True
+      if msg.body['mkt_closed']: self.marketClosed()
 
       self.queryLastTrade(msg.body['symbol'], msg.body['data'])
 
     elif msg.body['msg'] == 'QUERY_SPREAD':
       # Call the querySpread method, which subclasses may extend.
       # Also note if the market is closed.
-      if msg.body['mkt_closed']: self.mkt_closed = True
+      if msg.body['mkt_closed']: self.marketClosed()
 
       self.querySpread(msg.body['symbol'], msg.body['data'], msg.body['bids'], msg.body['asks'], msg.body['book'])
 
     elif msg.body['msg'] == 'QUERY_ORDER_STREAM':
       # Call the queryOrderStream method, which subclasses may extend.
       # Also note if the market is closed.
-      if msg.body['mkt_closed']: self.mkt_closed = True
+      if msg.body['mkt_closed']: self.marketClosed()
 
       self.queryOrderStream(msg.body['symbol'], msg.body['orders'])
 
     elif msg.body['msg'] == 'QUERY_TRANSACTED_VOLUME':
-      if msg.body['mkt_closed']: self.mkt_closed = True
+      if msg.body['mkt_closed']: self.marketClosed()
       self.query_transacted_volume(msg.body['symbol'], msg.body['transacted_volume'])
 
     elif msg.body['msg'] == 'MARKET_DATA':
@@ -345,7 +358,7 @@ class TradingAgent(FinancialAgent):
       # this as a subclass request so each agent can supply an appropriate offset relative
       # to its trading frequency.
       ns_offset = self.getWakeFrequency()
-     
+      self.mkt_reopening = True
       self.setWakeup(self.mkt_open + ns_offset)
       
     #  if initial_mkt_open != self.mkt_open:
@@ -371,6 +384,17 @@ class TradingAgent(FinancialAgent):
     self.all_orders[order_id].fill_time = msg.body['fill_time']
     self.all_orders[order_id].fill_quantity = msg.body['quantity']
     self.all_orders[order_id].fill_type = msg.body['fill_type']
+
+    #if self.type  == "HeuristicBeliefLearningAgent":
+
+   #print(self.name)
+   # print("CURRENT", self.currentTime  ,"FILLTIME: ",  msg.body['fill_time'], "FILL PRICE: ", msg.body['fill_price'], "QUANTITY:", msg.body['quantity'], "FILL TYPE",  msg.body['fill_type'], "WHO", msg.body["who"])    
+    # print("REQUESTED QUANTITY:", self.all_orders[order_id].quantity)
+
+    if msg.body['sender'] == self.brokerID:
+      # must handle slippage
+      self.all_orders[order_id].slippage = msg.body['slip']
+
     # print("Agent " + str(self.id) + " filled order " + str(order_id))
     
 
@@ -425,9 +449,16 @@ class TradingAgent(FinancialAgent):
       # objects inside the order (we're halfway there) so there CAN be just a single
       # object per order, that never alters its original state, and eliminate all these copies.
       self.orders[order.order_id] = deepcopy(order)
-      self.sendMessage(self.exchangeID, Message({ "msg" : "LIMIT_ORDER", "sender": self.id,
+
+      if self.brokerID is not None:
+        self.sendMessage(self.brokerID, Message({ "msg" : "LIMIT_ORDER", "sender": self.id,
+                                                  "order" : order }))
+      else:
+        self.sendMessage(self.exchangeID, Message({ "msg" : "LIMIT_ORDER", "sender": self.id,
                                                   "order" : order })) 
+                                                  
       self.all_orders[order.order_id] = self.orders[order.order_id]
+  
       # Log this activity.
       if self.log_orders: self.logEvent('ORDER_SUBMITTED', order.to_dict())
 
@@ -466,8 +497,16 @@ class TradingAgent(FinancialAgent):
           return
 
       self.orders[order.order_id] = deepcopy(order)
-      self.sendMessage(self.exchangeID, Message({"msg" : "MARKET_ORDER", "sender": self.id, "order": order}), delay=delay)
- 
+
+      if self.brokerID is not None:
+        self.sendMessage(self.brokerID, Message({"msg" : "MARKET_ORDER", "sender": self.id, "order": order}), delay=delay)
+      else:
+        self.sendMessage(self.exchangeID, Message({"msg" : "MARKET_ORDER", "sender": self.id, "order": order}), delay=delay)
+
+      if self.brokerID is not None:
+        # not gonna be split into multiple limit orders so need to note it now
+        self.all_orders[order.order_id] = self.orders[order.order_id]
+
       if self.log_orders: self.logEvent('ORDER_SUBMITTED', order.to_dict())
     else:
       log_print("TradingAgent ignored market order of quantity zero: {}", order)
@@ -567,8 +606,8 @@ class TradingAgent(FinancialAgent):
   def marketClosed (self):
     log_print ("Received notification of market closure.")
 
-    # Log this activity.
-    self.logEvent('MKT_CLOSED')
+    # BUG: DON'T Log this activity (if we haven't already)
+    # self.logEvent('MKT_CLOSED')
 
     # Remember that this has happened.
     self.mkt_closed = True
@@ -590,10 +629,12 @@ class TradingAgent(FinancialAgent):
       log_print ("Received daily close price of {} for {}.", self.last_trade[symbol], symbol)
 
   def finalClose (self):
-    self.logEvent('MKT_CLOSED')
+    #self.logEvent('MKT_CLOSED')
 
     # Remember that this has happened.
     self.mkt_closed = True
+
+    # send no other messages to the exchange - otherwise loops
 
   # Handles QUERY_SPREAD messages from an exchange agent.
   def querySpread (self, symbol, price, bids, asks, book):
@@ -611,9 +652,9 @@ class TradingAgent(FinancialAgent):
 
     log_print ("Received spread of {} @ {} / {} @ {} for {}", best_bid_qty, best_bid, best_ask_qty, best_ask, symbol)
 
-    self.logEvent("BID_DEPTH", bids)
-    self.logEvent("ASK_DEPTH", asks)
-    self.logEvent("IMBALANCE", [sum([x[1] for x in bids]), sum([x[1] for x in asks])])
+    #self.logEvent("BID_DEPTH", bids)
+    #self.logEvent("ASK_DEPTH", asks)
+    #self.logEvent("IMBALANCE", [sum([x[1] for x in bids]), sum([x[1] for x in asks])])
 
     self.book = book
 
@@ -693,7 +734,7 @@ class TradingAgent(FinancialAgent):
 
 
   # Marks holdings to market (including cash).
-  def markToMarket (self, holdings, use_midpoint=False):
+  def markToMarket (self, holdings, use_midpoint=False, use_price=None):
     cash = holdings['CASH']
     
     cash += self.basket_size * self.nav_diff
@@ -701,19 +742,27 @@ class TradingAgent(FinancialAgent):
     for symbol, shares in holdings.items():
       if symbol == 'CASH': continue
 
-      if use_midpoint:
+      if use_price is not None:
+        print(use_price)
+        value = use_price * shares
+        self.logEvent('MARK_TO_MARKET', "{} {} @ {} == {}".format(shares, symbol,
+                    use_price, value))
+      elif use_midpoint:
         bid, ask, midpoint = self.getKnownBidAskMidpoint(symbol)
         if bid is None or ask is None or midpoint is None:
           value = self.last_trade[symbol] * shares
         else:
           value = midpoint * shares
+          self.logEvent('MARK_TO_MARKET', "{} {} @ {} == {}".format(shares, symbol,
+                    midpoint, value))
       else:
         value = self.last_trade[symbol] * shares
+        self.logEvent('MARK_TO_MARKET', "{} {} @ {} == {}".format(shares, symbol,
+                    self.last_trade[symbol], value))
 
       cash += value
 
-      self.logEvent('MARK_TO_MARKET', "{} {} @ {} == {}".format(shares, symbol,
-                    self.last_trade[symbol], value))
+      
 
     self.logEvent('MARKED_TO_MARKET', cash)
 

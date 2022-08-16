@@ -14,7 +14,7 @@ silent_mode = False
 
 class LimitOrder(Order):
 
-    def __init__(self, agent_id, time_placed, symbol, quantity, is_buy_order, limit_price, order_id=None, tag=None, slippage=0):
+    def __init__(self, agent_id, time_placed, symbol, quantity, is_buy_order, limit_price, order_id=None, tag=None, slippage=0, best=None):
 
         super().__init__(agent_id, time_placed, symbol, quantity, is_buy_order, order_id, tag=tag)
         self.filled = False
@@ -22,7 +22,7 @@ class LimitOrder(Order):
         # the maximum price the agent will pay (for a buy order).
         self.limit_price: int = limit_price
         self.slippage = slippage   # positive slippage = buy moved away 
-
+        self.best = best # for slippage calc later
     def __str__(self):
         if silent_mode: return ''
 

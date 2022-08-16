@@ -31,7 +31,7 @@ class NoiseAgent(TradingAgent):
         # units have passed.
         self.prev_wake_time = None
 
-        self.size = np.random.randint(20, 50)
+        self.size = np.random.randint(5, 500)
 
     def kernelStarting(self, startTime):
         # self.kernel is set in Agent.kernelInitializing()
@@ -71,7 +71,7 @@ class NoiseAgent(TradingAgent):
             "{} final report.  Holdings {}, end cash {}, start cash {}, final fundamental {}, surplus {}",
             self.name, H, self.holdings['CASH'], self.starting_cash, rT, surplus)
 
-        print("Final relative surplus", self.name, surplus)
+        # print("Final relative surplus", self.name, surplus)
 
     def wakeup(self, currentTime):
         # Parent class handles discovery of exchange times and market_open wakeup call.

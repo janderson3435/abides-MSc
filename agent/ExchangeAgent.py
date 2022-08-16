@@ -7,6 +7,7 @@
 from agent.FinancialAgent import FinancialAgent
 from message.Message import Message
 from util.OrderBook import OrderBook
+from util.BrokerOrderBook import BrokerOrderBook
 from util.util import log_print
 
 import datetime as dt
@@ -23,8 +24,8 @@ from copy import deepcopy
 
 class ExchangeAgent(FinancialAgent):
 
-  def __init__(self, id, name, type, mkt_open, mkt_close, symbols, book_freq='S', wide_book=False, pipeline_delay = 40000,
-               computation_delay = 1, stream_history = 0, days = 1, log_orders = False, random_state = None):
+  def __init__(self, id, name, type, mkt_open, mkt_close, symbols, book_freq=None, wide_book=False, pipeline_delay = 40000,
+               computation_delay = 1, stream_history = 0, days = 1, log_orders = False, random_state = None, broker_book=False):
 
     super().__init__(id, name, type, random_state)
 
@@ -55,9 +56,14 @@ class ExchangeAgent(FinancialAgent):
 
     # Create an order book for each symbol.
     self.order_books = {}
+    self.symbols = symbols
 
-    for symbol in symbols:
-      self.order_books[symbol] = OrderBook(self, symbol)
+    if broker_book:
+      for symbol in symbols:
+        self.order_books[symbol] = BrokerOrderBook(self, symbol) # if this is a brokers 'internal' exchange, need differnt book functionality
+    else:
+      for symbol in symbols:
+        self.order_books[symbol] = OrderBook(self, symbol)
 
     # At what frequency will we archive the order books for visualization and analysis?
     self.book_freq = book_freq
@@ -126,6 +132,7 @@ class ExchangeAgent(FinancialAgent):
     self.setComputationDelay(self.computation_delay)
 
     # Is the exchange closed?  (This block only affects post-close, not pre-open.)
+    
     if self.checkMarketClosed():
       # Most messages after close will receive a 'MKT_CLOSED' message in response.  A few things
       # might still be processed, like requests for final trade prices or such.
@@ -143,7 +150,7 @@ class ExchangeAgent(FinancialAgent):
       else:
         log_print("{} received {}, discarded: market is closed.", self.name, msg.body['msg'])
         self.sendMessage(msg.body['sender'], Message({"msg": "MKT_CLOSED"}))
-
+       
         # Don't do any further processing on these messages!
         return
 
@@ -170,7 +177,7 @@ class ExchangeAgent(FinancialAgent):
       # check if market has shut for last time
       # TODO: improve this so it works with getMarketClosed function 
       if self.currentTime > self.mkt_close and self.currentTime > self.mkt_open and (self.sim_days == self.current_day):
-        self.sendMessage(msg.body['sender'], Message({"msg": "FINAL_CLOSE"}))
+        self.sendMessage(msg.body['sender'], Message({"msg": "FINAL_CLOSE", "data": [(self.order_books[symbol].last_trade, symbol) for symbol in self.order_books]}))
         return
 
       self.sendMessage(msg.body['sender'], Message({"msg": "WHEN_MKT_OPEN", "data": self.mkt_open}))
@@ -184,7 +191,7 @@ class ExchangeAgent(FinancialAgent):
       self.setComputationDelay(0)
       # check if market has shut for last time
       if self.currentTime > self.mkt_close and self.currentTime > self.mkt_open and (self.sim_days == self.current_day):
-        self.sendMessage(msg.body['sender'], Message({"msg": "FINAL_CLOSE"}))
+        self.sendMessage(msg.body['sender'], Message({"msg": "FINAL_CLOSE", "data":  [(self.order_books[symbol].last_trade, symbol) for symbol in self.order_books]}))
         return
 
       self.sendMessage(msg.body['sender'], Message({"msg": "WHEN_MKT_CLOSE", "data": self.mkt_close}))
@@ -354,7 +361,8 @@ class ExchangeAgent(FinancialAgent):
     if book.book_log:
 
       print("Logging order book to file...")
-      dfLog = book.book_log_to_df()
+      dfLog1 = book.book_log_to_df()
+      dfLog = dfLog1.copy() # defrag 
       dfLog.set_index('QuoteTime', inplace=True)
       dfLog = dfLog[~dfLog.index.duplicated(keep='last')]
       dfLog.sort_index(inplace=True)
@@ -441,15 +449,16 @@ class ExchangeAgent(FinancialAgent):
       self.first_mkt_open = False
       return False
 
-    if self.sim_days == self.current_day:
+    if self.currentTime < self.mkt_open:
+      # closed for today, but will reopen (params update below)
+      # BUG: agents sees this and closes forever
+      return True
+
+    elif self.sim_days == self.current_day:
       # market will shut for last time if EOD
       return self.currentTime > self.mkt_close 
 
-    elif self.currentTime < self.mkt_open:
-      # closed for today, but will reopen (params update below)
-      # BUG: agents see this and close down forever?
-      # BUT if false then agents keep running - not desired
-      return True
+    
 
     elif self.currentTime > self.mkt_close:
       # market closed for today, but will reopen tomorrow
