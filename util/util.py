@@ -32,17 +32,14 @@ def delist(list_of_lists):
     return [x for b in list_of_lists for x in b]
 
 # Utility function to get agent wake up times to follow a U-quadratic distribution.
-def get_wake_time(open_time, close_time, a=0, b=1):
-    """ Draw a time U-quadratically distributed between open_time and close_time.
+def get_wake_time(open_time, close_time, a=0, b=1, n=1, days=1):
+    """ Draw a time U-quadratically distributed between open_time and close_time, for each day
         For details on U-quadtratic distribution see https://en.wikipedia.org/wiki/U-quadratic_distribution
     """
-    def cubic_pow(n):
+    def cubic_pow(ns):
         """ Helper function: returns *real* cube root of a float"""
-        if n < 0:
-            return -(-n) ** (1.0 / 3.0)
-        else:
-            return n ** (1.0 / 3.0)
-
+        output = np.sign(ns) * ((np.abs(ns) ** (1.0/3.0)))
+        return output
     #  Use inverse transform sampling to obtain variable sampled from U-quadratic
     def u_quadratic_inverse_cdf(y):
         alpha = 12 / ((b - a) ** 3)
@@ -50,11 +47,16 @@ def get_wake_time(open_time, close_time, a=0, b=1):
         result = cubic_pow((3 / alpha) * y - (beta - a)**3 ) + beta
         return result
 
-    uniform_0_1 = np.random.rand()
-    random_multiplier = u_quadratic_inverse_cdf(uniform_0_1)
-    wake_time = open_time + random_multiplier * (close_time - open_time)
-
-    return wake_time
+    wakes = []
+    for i in range(int(days)+1):
+        daily_open_time = open_time + pd.Timedelta(days=i)
+        daily_close_time = close_time + pd.Timedelta(days=i)
+        uniform_0_1 = np.random.rand(n) 
+        random_multiplier = u_quadratic_inverse_cdf(uniform_0_1)
+        wake_time = daily_open_time + random_multiplier * (daily_close_time - daily_open_time)
+        for j in range(n):
+            wakes.append(wake_time[j])
+    return wakes
 
 def numeric(s):
     """ Returns numeric type from string, stripping commas from the right.

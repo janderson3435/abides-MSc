@@ -15,8 +15,17 @@ if len(sys.argv) < 2:
 # read_agent_logs.py takes a log directory, reads all agent log files, and produces a summary of
 # desired totals or statistics by strategy (type + parameter settings).
 
-log_dirs = sys.argv[1:]
+log_dir = sys.argv[1:]
 stats = []
+
+d = os.listdir(log_dir[0])
+path = ""
+if os.path.isdir(log_dir[0] + "//" + d[0]):
+  # get all folders in log_dir
+  log_dirs = d
+  path = log_dir[0] + "//"
+else:
+  log_dirs = log_dir
 
 dir_count = 0
 file_count = 0
@@ -24,6 +33,7 @@ file_count = 0
 for log_dir in log_dirs:
   if dir_count % 100 == 0: print ("Completed {} directories".format(dir_count))
   dir_count += 1
+  log_dir = path + log_dir
   for file in os.listdir(log_dir):
     try:
       df = pd.read_pickle(os.path.join(log_dir,file), compression='bz2')

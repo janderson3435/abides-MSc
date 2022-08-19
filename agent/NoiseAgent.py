@@ -15,7 +15,8 @@ class NoiseAgent(TradingAgent):
         super().__init__(id, name, type, starting_cash=starting_cash, log_orders=log_orders,
                          log_to_file=log_to_file, random_state=random_state)
 
-        self.wakeup_time = wakeup_time,
+        self.wakeup_time = np.sort(wakeup_time)
+        #np.sort(self.wakeup_time)
 
         self.symbol = symbol  # symbol to trade
 
@@ -97,8 +98,12 @@ class NoiseAgent(TradingAgent):
             # Market is closed and we already got the daily close price.
             return
 
-        if self.wakeup_time[0] >currentTime:
-            self.setWakeup(self.wakeup_time[0])
+        for i, t in enumerate(self.wakeup_time):
+            if t > currentTime:
+                self.setWakeup(t)
+                self.wakeup_time = self.wakeup_time[i:] # cut list for efficiency
+                break
+
 
         if self.mkt_closed and (not self.symbol in self.daily_close_price):
             self.getCurrentSpread(self.symbol)
@@ -125,7 +130,6 @@ class NoiseAgent(TradingAgent):
     def receiveMessage(self, currentTime, msg):
         # Parent class schedules market open wakeup call once market open/close times are known.
         super().receiveMessage(currentTime, msg)
-
         # We have been awakened by something other than our scheduled wakeup.
         # If our internal state indicates we were waiting for a particular event,
         # check if we can transition to a new state.
@@ -139,7 +143,8 @@ class NoiseAgent(TradingAgent):
                 # This is what we were waiting for.
 
                 # But if the market is now closed, don't advance to placing orders.
-                if self.mkt_closed: return
+                if self.mkt_closed: 
+                    return
 
                 # We now have the information needed to place a limit order with the eta
                 # strategic threshold parameter.

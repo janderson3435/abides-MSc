@@ -157,9 +157,9 @@ class ZeroIntelligenceAgent(TradingAgent):
         # Flip a coin to decide if we will buy or sell a unit at this time.
         q = int(self.getHoldings(self.symbol)) # q now represents lots held
         if q >= self.q_max:
+            q = self.q_max #  need this so don't go out of bounds of theta array - TODO: what are consequences of this 
             buy = False
             log_print("Long holdings limit: agent will SELL")
-            q = self.q_max #  need this so don't go out of bounds of theta array - TODO: what are consequences of this 
         elif q <= -self.q_max:
             q = -self.q_max
             buy = True
@@ -281,8 +281,10 @@ class ZeroIntelligenceAgent(TradingAgent):
                 # This is what we were waiting for.
 
                 # But if the market is now closed, don't advance to placing orders.
-                if self.mkt_closed: return
-
+                if self.mkt_closed: 
+                  #  print("closed, no order")
+                    return
+                #print("open, order")
                 # We now have the information needed to place a limit order with the eta
                 # strategic threshold parameter.
                 self.placeOrder()

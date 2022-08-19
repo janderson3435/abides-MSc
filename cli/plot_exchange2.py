@@ -104,9 +104,9 @@ axes[0].legend(['BID_PRICE', 'ASK_PRICE', "TRADE_PRICE"])
 axes[0].set_title("Exchange Agent")
 
 axes[0].set_ylabel('Price ($)')
-axes[3].set_xlabel('Time')
+axes[2].set_xlabel('Time')
 
-#plt.savefig('value_noise_MM_2''.png')
+plt.savefig('bids_full_sim''.png')
 
 
 plt.show()

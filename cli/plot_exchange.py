@@ -83,7 +83,7 @@ axes[0].set_ylabel('Price ($)')
 axes[0].set_xlabel('Time')
 
 
-#plt.savefig('value_noise_MM_2''.png')
+plt.savefig('bidasks_1_day''.png')
 
 plt.show()
 

@@ -47,9 +47,9 @@ parser.add_argument('-s',
                     default=1,
                     help='numpy.random.seed() for simulation')
 parser.add_argument('-d',
-                    '--historical_date',
-                    default=pd.to_datetime('2020-01-01'),
-                    help='date to test')
+                    '--delay',
+                    default = 2000000000,
+                    help='Delay for retail agent trades')
 parser.add_argument('-v',
                     '--verbose',
                     action='store_true',
@@ -72,7 +72,7 @@ parser.add_argument('-e',
 parser.add_argument('-n',
                     '--noise',
                     default=1,
-                    help='Include noise agents')        
+                    help='Percentage of noise agents')        
 parser.add_argument('-i',
                     '--iterations',
                     default=1,
@@ -82,8 +82,6 @@ args, remaining_args = parser.parse_known_args()
 if args.config_help:
     parser.print_help()
     sys.exit()
-
-
  
 log_dir = args.log_dir  # Requested log directory. # TODO: if it exists, overwrite
 seed = args.seed  # Random seed specification on the command line.
@@ -100,7 +98,7 @@ print("Configuration seed: {}\n".format(seed))
 ############################################### AGENTS CONFIG ##########################################################
 
 # Historical date to simulate.
-historical_date = args.historical_date # midnight on date
+historical_date = pd.to_datetime('2020-01-01') # midnight on date
 symbol = args.ticker
 
 agent_count, agents, agent_types = 0, [], []
@@ -129,6 +127,21 @@ days = pd.to_timedelta(args.experiment_length)/day_length
 if days < 1:
     days = 1
     mkt_close = mkt_open + pd.to_timedelta(args.experiment_length)
+
+# Number of each agent type
+total_agents = 1000
+r = 0.3
+if int(args.noise) == 100:
+    noise = total_agents - 1
+    mm = 1
+    hbl = 0
+    zi = 0
+else:
+    noise = int(int(args.noise) * total_agents / 100)
+    mm = 1
+    hbl = int((1-r) * (total_agents - noise - mm))
+    zi = total_agents - noise - mm - hbl
+print("Noise: {}, MM: {}, HBL: {}, ZI: {}".format(noise, mm, hbl, zi))
 
 symbols = {symbol: {'r_bar': 1e4,   # base price of asset
                     'kappa': 1.67e-12,  
@@ -164,7 +177,7 @@ agent_types.extend("ExchangeAgent")
 agent_count += 1
 
 # 2) 1 Market Maker Agent
-num_mm_agents = 1
+num_mm_agents = mm
 agents.extend([MarketMakerAgent(id=j,
                                 name="MARKET_MAKER_{}".format(j),
                                 type='MarketMakerAgent',
@@ -172,6 +185,7 @@ agents.extend([MarketMakerAgent(id=j,
                                 starting_cash=mm_cash,
                                 min_size=1,
                                 max_size=1000,
+                                subscribe=True,
                                 log_orders=False,
                                 log_to_file=False,
                                 random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
@@ -181,9 +195,9 @@ agents.extend([MarketMakerAgent(id=j,
 agent_types.extend('MarketMakerAgent')
 agent_count += num_mm_agents
 
-# 3) 30 retail Agents   -   30% of total agents
+# 3) retail Agents   -   30% of total agents
 
-num_retail_agents = 30
+num_retail_agents = zi
 agents.extend([RetailExecutionAgent(id=j,
                                      name="RETAIL_{}".format(j),
                                      type="RetailExecutionAgent",
@@ -201,7 +215,7 @@ agents.extend([RetailExecutionAgent(id=j,
                                      lambda_a=1e-13,        # determines how frequently agent wakes up and considers trading, this gives range of 5 mins to 10 hours
                                      log_orders=False,
                                      execution=True,
-                                     retail_delay=2000000000, # 2 second delay on messages to simulate real life order routing. Will be altered with experiments
+                                     retail_delay=args.delay, # 2 second delay on messages to simulate real life order routing. Will be altered with experiments
                                      random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                                dtype='uint64')))
                for j in range(agent_count, agent_count + num_retail_agents)])
@@ -209,7 +223,7 @@ agent_types.extend("RetailExecutionAgent")
 agent_count += num_retail_agents
 
 # 4) 70 Heuristic Belief Learning Agents    - smarter, represent institutions 
-num_hbl_agents = 70
+num_hbl_agents = hbl
 agents.extend([HeuristicBeliefLearningAgent(id=j,
                                             name="HBL_{}".format(j),
                                             type="HeuristicBeliefAgent",
@@ -231,28 +245,32 @@ agents.extend([HeuristicBeliefLearningAgent(id=j,
                                             random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32,
                                                                                                       dtype='uint64')))
                for j in range(agent_count, agent_count + num_hbl_agents)])
-agent_types.extend("HeuristicBeliefLearningAgent")
+agent_types.extend("HeuristicBeliefAgent")
 agent_count += num_hbl_agents
 
 # 5) Noise Agents
-if bool(int(args.noise)):
-    num_noise = 900
-    agents.extend([NoiseAgent(id=j,
-                            name="NOISE_{}".format(j),
-                            type="NoiseAgent",
-                            symbol=symbol,
-                            wakeup_time=util.get_wake_time(mkt_open, mkt_close),
-                            log_orders=False,
-                            log_to_file=False,
-                            random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32, dtype='uint64')))
-                for j in range(agent_count, agent_count + num_noise)])
-    agent_count += num_noise
-    agent_types.extend(['NoiseAgent'])
+
+    # num_noise = 900
+    # agent must wake up enough times over the experiment
+    # trade off here between number of agents (more messages in total) and number of wakes per agent
+wakes_per_day = 3
+num_noise = noise
+agents.extend([NoiseAgent(id=j,
+                        name="NOISE_{}".format(j),
+                        type="NoiseAgent",
+                        symbol=symbol,
+                        wakeup_time=util.get_wake_time(mkt_open, mkt_close, n=wakes_per_day, days=days),
+                        log_orders=False,
+                        log_to_file=False,
+                        random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32, dtype='uint64')))
+            for j in range(agent_count, agent_count + num_noise)])
+agent_count += num_noise
+agent_types.extend(['NoiseAgent'])
 
 ########################################################################################################################
 ########################################### KERNEL AND OTHER CONFIG ####################################################
 
-kernel = Kernel("Test1 Kernel", random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
+kernel = Kernel("Kernel", random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                                   dtype='uint64')))
 offset = pd.to_timedelta(1, unit='h') # ensure kernel can complete shut down process after final mkt close
 kernelStartTime = historical_date

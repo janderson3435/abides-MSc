@@ -194,7 +194,9 @@ class HeuristicBeliefLearningAgent(ZeroIntelligenceAgent):
                 # This is what we were waiting for.
 
                 # But if the market is now closed, don't advance.
-                if self.mkt_closed: return
+                if self.mkt_closed:
+                    #print("closed, no order")
+                    return
 
                 self.getCurrentSpread(self.symbol)
                 self.state = 'AWAITING_SPREAD'

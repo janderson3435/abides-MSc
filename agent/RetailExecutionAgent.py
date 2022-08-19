@@ -14,7 +14,8 @@ class RetailExecutionAgent(TradingAgent):
     Retail trading agent, designed to behave like a real life retail trader.
     Model based is an extension of zero-intelligence-constrained traders, with additional parameters.
     """
-
+    # TODO: should really be a subclass of ZIC
+    
     def __init__(self, id, name, type, symbol='IBM', starting_cash=100000, sigma_n=1000,
                  r_bar=100000, kappa=0.05, sigma_s=100000, q_max=10,
                  sigma_pv=5000000, R_min=0, R_max=250, eta=1.0,
@@ -45,7 +46,7 @@ class RetailExecutionAgent(TradingAgent):
         # The agent uses this to track whether it has begun its strategy or is still
         # handling pre-market tasks.
         self.trading = False
-
+        self.debt = True 
         # The agent begins in its "complete" state, not waiting for
         # any special event or condition.
         self.state = 'AWAITING_WAKEUP'
@@ -138,7 +139,7 @@ class RetailExecutionAgent(TradingAgent):
         # be generated for those, anyway, unless something strange has happened.)
         
         if not self.mkt_reopening:
-            self.cancelOrders() # TODO: CHANGE FOR MULTIDAY TESTS - order should stay open overnight?
+            self.cancelOrders() 
 
         # The ZI agent doesn't try to maintain a zero position, so there is no need to exit positions
         # as some "active trading" agents might.  It might exit a position based on its order logic,
@@ -174,9 +175,11 @@ class RetailExecutionAgent(TradingAgent):
 
         if q >= self.q_max:
             buy = False
+            q = self.q_max #  need this so don't go out of bounds of theta array - TODO: what are consequences of this 
             log_print("Long holdings limit: agent will SELL")
         elif q <= -self.q_max:
             buy = True
+            q = -self.q_max
             log_print("Short holdings limit: agent will BUY")
         else:
             buy = bool(self.random_state.randint(0, 2))
@@ -293,22 +296,24 @@ class RetailExecutionAgent(TradingAgent):
         
          
         if not(bid is None or ask is None):
-            while buy and ask*size > cash and size > 0: # can we afford to buy this volume?
-                size -= 1
-                if size == 0:
-                    log_print("{} could not afford {} shares at ask = {}", self.name, size, ask)
-                    return
-            
-            while (not buy) and (size > shares) and (size > 0): 
-                # do we have the stock to sell?
-                # TODO: allow (some?) retail agents to short 
-                size -= 1
-                if size == 0 or no_shares:
-                    log_print("{} could not afford to sell {} shares", self.name, size)
-                    return
+            if not self.debt:
+                while buy and ask*size > cash and size > 0: # can we afford to buy this volume?
+                    size -= 1
+                    if size == 0:
+                        log_print("{} could not afford {} shares at ask = {}", self.name, size, ask)
+                        return
+                
+                while (not buy) and (size > shares) and (size > 0): 
+                    # do we have the stock to sell?
+                    # TODO: allow (some?) retail agents to short 
+                    size -= 1
+                    if size == 0 or no_shares:
+                        log_print("{} could not afford to sell {} shares", self.name, size)
+                        return
         else:
             return
-  
+
+
         if self.order_type == "limit":
             self.placeLimitOrder(self.symbol, size, buy, p)
         else:
@@ -333,13 +338,17 @@ class RetailExecutionAgent(TradingAgent):
             # QUERY_SPREAD response message.
 
             if msg.body['msg'] == 'QUERY_SPREAD':
+              #  print("queried and waiting")
                 # This is what we were waiting for.
 
                 # But if the market is now closed, don't advance to placing orders.
-                if self.mkt_closed: return
+                if self.mkt_closed: 
+                   # print("closed, no order")
+                    return
 
                 # We now have the information needed to place a limit order with the eta
                 # strategic threshold parameter.
+                #print("open, order")
                 self.placeOrder()
                 self.state = 'AWAITING_WAKEUP'
 

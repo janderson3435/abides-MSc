@@ -115,11 +115,12 @@ def random_retail_start_cash(retail_cash = 250000): # $2,500
 
 def random_institution_start_cash(institution_cash = 5000000000): # $50,000,000
     # Draws start cash from a normal distribution around institution_cash
-    return int(np.random.normal(institution_cash, institution_cash * 0.1)) # TODO: improve?
+    c = int(np.random.lognormal(np.log(institution_cash/100),1)) * 100
+    return  c # TODO: improve?
 
 # Oracle
 mkt_open = historical_date + pd.to_timedelta('9:00:00')
-mkt_close = historical_date +  pd.to_timedelta('09:10:00')
+mkt_close = historical_date +  pd.to_timedelta('16:00:00')
 
 day_length = mkt_close - mkt_open
 days = pd.to_timedelta(args.experiment_length)/day_length 
@@ -144,7 +145,7 @@ oracle = SparseMeanRevertingOracle(mkt_open, mkt_close + pd.Timedelta(days, unit
 stream_history_length = 10
 
 agents.extend([ExchangeAgent(id=0,
-                             name="EXCHANGE_AGENT",
+                             name="EXCHANGE",
                              type="ExchangeAgent",
                              mkt_open=mkt_open,
                              mkt_close=mkt_close,
@@ -153,17 +154,18 @@ agents.extend([ExchangeAgent(id=0,
                              stream_history=stream_history_length,
                              pipeline_delay=0,
                              computation_delay=0,
-                             wide_book=False,
-                             #book_freq=0,
+                             wide_book=False, # check this param ?
+                             #book_freq=0, # 'S' for second resolution, none for no recording of order book (takes long and don't need it for plotting - exchange saves best bids and ask)
                              days=days,
                              random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                        dtype='uint64')))])
 agent_types.extend("ExchangeAgent")
 agent_count += 1
 
+
 # 1.1) 1 broker agent - all retail go through this
 agents.extend([BrokerAgent(id=1,
-                             name="BROKER_AGENT",
+                             name="BROKER_{}".format(agent_count),
                              type="BrokerAgent",
                              exchange=agents[0],
                              random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
@@ -175,12 +177,13 @@ agent_count += 1
 # 2) 1 Market Maker Agent
 num_mm_agents = 1
 agents.extend([MarketMakerAgent(id=j,
-                                name="MARKET_MAKER_AGENT_{}".format(j),
+                                name="MARKET_MAKER_{}".format(j),
                                 type='MarketMakerAgent',
                                 symbol=symbol,
                                 starting_cash=mm_cash,
                                 min_size=1,
                                 max_size=1000,
+                                subscribe=True,
                                 log_orders=False,
                                 log_to_file=False,
                                 random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
@@ -207,11 +210,10 @@ agents.extend([RetailExecutionAgent(id=j,
                                      R_min=0,
                                      R_max=100,
                                      eta=1,
-                                     lambda_a=1e-13,
+                                     lambda_a=1e-13,        # determines how frequently agent wakes up and considers trading, this gives range of 5 mins to 10 hours
                                      log_orders=False,
                                      execution=True,
-                                   #  retail_delay=2000000000, # 2 second delay on messages
-                                     brokerID= broker_id,       # broker for this experiment type - shouldn't need above delay anymore
+                                     retail_delay=args.delay, # 2 second delay on messages to simulate real life order routing. Will be altered with experiments
                                      random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                                dtype='uint64')))
                for j in range(agent_count, agent_count + num_retail_agents)])
@@ -221,7 +223,7 @@ agent_count += num_retail_agents
 # 4) 70 Heuristic Belief Learning Agents    - smarter, represent institutions 
 num_hbl_agents = 70
 agents.extend([HeuristicBeliefLearningAgent(id=j,
-                                            name="HBL_AGENT_{}".format(j),
+                                            name="HBL_{}".format(j),
                                             type="HeuristicBeliefAgent",
                                             symbol=symbol,
                                             starting_cash=random_institution_start_cash(), 
@@ -234,31 +236,31 @@ agents.extend([HeuristicBeliefLearningAgent(id=j,
                                             R_min=0,
                                             R_max=100,
                                             eta=1,
-                                            lambda_a=1e-12,
-                                            L=2,
-                                            risk_factor=0.1,
+                                            lambda_a=1e-12, # returns between 1 minute and 1 hour later
+                                            L=5,
                                             log_orders=False,
+                                            risk_factor=0.1,       
                                             random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32,
                                                                                                       dtype='uint64')))
                for j in range(agent_count, agent_count + num_hbl_agents)])
-agent_types.extend("HeuristicBeliefLearningAgent")
+agent_types.extend("HeuristicBeliefAgent")
 agent_count += num_hbl_agents
 
 # 5) Noise Agents
 if bool(int(args.noise)):
-    num_noise = 900
+    wakes_per_day = 3
+    num_noise = 1000
     agents.extend([NoiseAgent(id=j,
-                            name="NoiseAgent {}".format(j),
-                            type="NoiseAgent",
-                            symbol=symbol,
-                            wakeup_time=util.get_wake_time(mkt_open, mkt_close),
-                            log_orders=False,
-                            log_to_file=False,
-                            random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32, dtype='uint64')))
-                for j in range(agent_count, agent_count + num_noise)])
+                        name="NOISE_{}".format(j),
+                        type="NoiseAgent",
+                        symbol=symbol,
+                        wakeup_time=util.get_wake_time(mkt_open, mkt_close, n=wakes_per_day, days=days),
+                        log_orders=False,
+                        log_to_file=False,
+                        random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32, dtype='uint64')))
+            for j in range(agent_count, agent_count + num_noise)])
     agent_count += num_noise
     agent_types.extend(['NoiseAgent'])
-
 ########################################################################################################################
 ########################################### KERNEL AND OTHER CONFIG ####################################################
 
