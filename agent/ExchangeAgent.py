@@ -470,8 +470,11 @@ class ExchangeAgent(FinancialAgent):
       self.mkt_open = self.mkt_open + pd.to_timedelta(1, unit='D')
       self.mkt_close = self.mkt_close + pd.to_timedelta(1, unit='D') 
 
-      # TODO: wait for market open or fast forward to open time? how to sync with kernel?
-      self.kernel.setWakeup(sender=self.id, requestedTime=self.mkt_open)
+      if self.currentTime < self.mkt_open:
+        # need this to fix bug 
+        # if no agents send a message after a close (i.e all noise)
+        # then it would attempt wakeup set in the past
+        self.kernel.setWakeup(sender=self.id, requestedTime=self.mkt_open)
       return True
 
     
