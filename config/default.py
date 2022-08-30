@@ -134,7 +134,7 @@ r = 0.3
 if int(args.noise) == 100:
     noise = total_agents - 1
     mm = 1
-    hbl = 0
+    hbl = 0 
     zi = 0
 else:
     noise = int(int(args.noise) * total_agents / 100)
@@ -207,7 +207,7 @@ agents.extend([RetailExecutionAgent(id=j,
                                      sigma_s=symbols[symbol]['fund_vol'],
                                      kappa=symbols[symbol]['agent_kappa'],
                                      r_bar=symbols[symbol]['r_bar'],
-                                     q_max=100,
+                                     q_max=20,
                                      sigma_pv=5e4,
                                      R_min=0,
                                      R_max=100,
@@ -215,7 +215,7 @@ agents.extend([RetailExecutionAgent(id=j,
                                      lambda_a=1e-13,        # determines how frequently agent wakes up and considers trading, this gives range of 5 mins to 10 hours
                                      log_orders=False,
                                      execution=True,
-                                     retail_delay=int(args.delay), # 2 second delay on messages to simulate real life order routing. Will be altered with experiments
+                                     retail_delay=args.delay, # 2 second delay on messages to simulate real life order routing. Will be altered with experiments
                                      random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                                dtype='uint64')))
                for j in range(agent_count, agent_count + num_retail_agents)])
@@ -224,7 +224,8 @@ agent_count += num_retail_agents
 
 # 4) 70 Heuristic Belief Learning Agents    - smarter, represent institutions 
 num_hbl_agents = hbl
-agents.extend([HeuristicBeliefLearningAgent(id=j,
+if num_hbl_agents != 0:
+    agents.extend([HeuristicBeliefLearningAgent(id=j,
                                             name="HBL_{}".format(j),
                                             type="HeuristicBeliefAgent",
                                             symbol=symbol,
@@ -243,10 +244,10 @@ agents.extend([HeuristicBeliefLearningAgent(id=j,
                                             log_orders=False,
                                             risk_factor=0.1,       
                                             random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32,
-                                                                                                      dtype='uint64')))
-               for j in range(agent_count, agent_count + num_hbl_agents)])
-agent_types.extend("HeuristicBeliefAgent")
-agent_count += num_hbl_agents
+                                                                                                        dtype='uint64')))
+                for j in range(agent_count, agent_count + num_hbl_agents)])
+    agent_types.extend("HeuristicBeliefAgent")
+    agent_count += num_hbl_agents
 
 # 5) Noise Agents
 
