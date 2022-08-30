@@ -80,6 +80,10 @@ parser.add_argument('-o',
                     '--odds',
                     default=0,
                     help='Allow odd lots') # without odd lots, trader must go through broker that combines orders
+parser.add_argument('-d1',
+                    '--delay',
+                    default = 2000000000,
+                    help='Delay for retail agent trades')
 
 args, remaining_args = parser.parse_known_args()
 if args.config_help:
@@ -249,7 +253,7 @@ agent_count += num_hbl_agents
 # 5) Noise Agents
 if bool(int(args.noise)):
     wakes_per_day = 3
-    num_noise = 1000
+    num_noise = 899
     agents.extend([NoiseAgent(id=j,
                         name="NOISE_{}".format(j),
                         type="NoiseAgent",

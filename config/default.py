@@ -71,7 +71,7 @@ parser.add_argument('-e',
                     help='Experiment length')               
 parser.add_argument('-n',
                     '--noise',
-                    default=1,
+                    default=80,
                     help='Percentage of noise agents')        
 parser.add_argument('-i',
                     '--iterations',
@@ -207,7 +207,7 @@ agents.extend([RetailExecutionAgent(id=j,
                                      sigma_s=symbols[symbol]['fund_vol'],
                                      kappa=symbols[symbol]['agent_kappa'],
                                      r_bar=symbols[symbol]['r_bar'],
-                                     q_max=20,
+                                     q_max=100,
                                      sigma_pv=5e4,
                                      R_min=0,
                                      R_max=100,
@@ -215,7 +215,7 @@ agents.extend([RetailExecutionAgent(id=j,
                                      lambda_a=1e-13,        # determines how frequently agent wakes up and considers trading, this gives range of 5 mins to 10 hours
                                      log_orders=False,
                                      execution=True,
-                                     retail_delay=args.delay, # 2 second delay on messages to simulate real life order routing. Will be altered with experiments
+                                     retail_delay=int(args.delay), # 2 second delay on messages to simulate real life order routing. Will be altered with experiments
                                      random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 16,
                                                                                                dtype='uint64')))
                for j in range(agent_count, agent_count + num_retail_agents)])
